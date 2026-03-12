@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
 
 type Payload = {
   nombre: string;
@@ -29,6 +29,7 @@ function esPayloadValido(payload: Partial<Payload>): payload is Payload {
 
 export async function POST(request: Request) {
   try {
+    const supabase = getSupabaseClient();
     const body = (await request.json()) as Partial<Payload>;
 
     if (!esPayloadValido(body)) {
@@ -42,7 +43,11 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ ok: true }, { status: 201 });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Faltan variables de entorno de Supabase")) {
+      return NextResponse.json({ error: "Configuracion de Supabase incompleta en el servidor." }, { status: 500 });
+    }
+
     return NextResponse.json({ error: "No se pudo procesar la solicitud." }, { status: 400 });
   }
 }
