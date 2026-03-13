@@ -325,20 +325,26 @@ export function paletteToCSS(
  * Corporate brand colors for the platform itself (landing page, non-tenant UI).
  * Used when no tenant context is active.
  *
- *   Negro Suave   #111111  — headings, primary text
- *   Gris Grafito  #2B2B2B  — body text, labels
- *   Gris Claro    #F2F2F2  — canvas / light backgrounds
+ *   Morado Base   #382960  — color primario
+ *   Magenta       #A42879  — color secundario / hover
+ *   Gris Oscuro   #252626  — texto principal
+ *   Gris Claro    #F6F3FB  — fondo claro
  *   Blanco        #FFFFFF  — surfaces, elevated elements
- *   Verde Acento  #00C48C  — primary action / accent (CTA, links, focus)
+ *   Dorado        #EBBC45  — acento
+ *   Rojo          #AE1F1D  — acento calido
+ *   Coral         #C73D35  — acento calido secundario
  */
 export const CORPORATE_COLORS = {
-  negroSuave:   '#111111',
-  grisGrafito:  '#2B2B2B',
-  grisClaro:    '#F2F2F2',
+  negroSuave:   '#252626',
+  grisGrafito:  '#4B4B4B',
+  grisClaro:    '#F6F3FB',
   blanco:       '#FFFFFF',
-  verdeAccion:  '#00A8C4',
-  verdeHover:   '#0090A8',
-  accentLight:  '#E0F6FA',
+  verdeAccion:  '#382960',
+  verdeHover:   '#A42879',
+  accentLight:  '#F3ECFB',
+  dorado:       '#EBBC45',
+  rojo:         '#AE1F1D',
+  coral:        '#C73D35',
 } as const;
 
 /**
@@ -347,8 +353,8 @@ export const CORPORATE_COLORS = {
  */
 export function generateCorporatePalette(): TenantPalette {
   return generateTenantPalette(
-    CORPORATE_COLORS.verdeAccion,  // primario  → brand / accent
-    CORPORATE_COLORS.grisGrafito,  // secundario
+    CORPORATE_COLORS.verdeAccion,  // primario  → morado marca
+    CORPORATE_COLORS.verdeHover,   // secundario → magenta marca
     CORPORATE_COLORS.grisClaro,    // light
     CORPORATE_COLORS.negroSuave,   // dark
   );

@@ -6,6 +6,14 @@ const nextConfig: NextConfig = {
       allowedOrigins: ["*.app.github.dev", "*.githubpreview.dev"],
     },
   },
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "res.cloudinary.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;
