@@ -33,6 +33,49 @@ Notas:
 - Si `NEXT_PUBLIC_AGENCY_LOGO_PUBLIC_URL` ya apunta a `res.cloudinary.com`, se usa tal cual.
 - Si falta `NEXT_PUBLIC_AGENCY_LOGO_FAREWELL_PUBLIC_URL`, la despedida usa el mismo logo principal.
 
+## Admin y acceso
+
+El panel de estadisticas vive en `/admin` y usa Supabase Auth.
+
+Variables necesarias en entorno de servidor:
+
+```bash
+SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
+
+# Opcional: restringe el admin a correos especificos
+ADMIN_ALLOWED_EMAILS=admin1@tu-dominio.com,admin2@tu-dominio.com
+```
+
+Notas:
+
+- El login en `/admin` usa usuario/contrasena de Supabase Auth.
+- Si defines `ADMIN_ALLOWED_EMAILS`, solo esos correos pueden obtener stats del endpoint `/api/admin/stats`.
+- Si no defines `ADMIN_ALLOWED_EMAILS`, cualquier usuario autenticado en tu proyecto de Supabase puede entrar al panel.
+
+## Tabla respuestas
+
+El formulario ahora guarda tambien:
+
+- `pais_residencia`
+- `nacionalidad`
+
+Antes de desplegar, ejecuta en Supabase SQL Editor el script:
+
+- `sql/alter_respuestas_add_pais_nacionalidad.sql`
+
+## Segmentacion objetivo (Chile)
+
+La encuesta aplica filtro de target:
+
+- `pais_residencia` debe ser Chile
+- `nacionalidad` debe ser Chile
+
+Adicionalmente, cuando el hosting entrega pais por IP (`x-vercel-ip-country`, `cf-ipcountry` o `cloudfront-viewer-country`), el backend valida que sea `CL`.
+
+Si quieres guardar metadatos de IP en la tabla, ejecuta tambien:
+
+- `sql/alter_respuestas_add_ip_segmentation.sql`
+
 ## Stack
 
 - Next.js App Router

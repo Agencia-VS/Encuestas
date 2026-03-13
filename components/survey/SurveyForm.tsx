@@ -25,7 +25,13 @@ const PREGUNTAS = [
 ];
 
 type Direccion = "forward" | "back";
-type DatosPersonales = { nombre: string; edad: string; sexo: string };
+type DatosPersonales = {
+  nombre: string;
+  edad: string;
+  sexo: string;
+  paisResidencia: string;
+  nacionalidad: string;
+};
 type Respuestas = { respuesta_1: string; respuesta_2: string; respuesta_3: string };
 
 type SurveyFormProps = {
@@ -35,11 +41,52 @@ type SurveyFormProps = {
 const TOTAL = 1 + PREGUNTAS.length;
 const FORM_LOGO_URL = getAgencyLogoUrl();
 const FAREWELL_LOGO_URL = getAgencyFarewellLogoUrl();
+const OTHER_OPTION = "Otro";
+const TARGET_COUNTRY_LABEL = "Chile";
 
 const SEXO_OPTS = [
   { label: "Masculino", valor: "masculino" },
   { label: "Femenino", valor: "femenino" },
   { label: "Prefiero N/D", valor: "prefiero_no_decir" },
+];
+
+const PAISES_OPTS = [
+  "Argentina",
+  "Bolivia",
+  "Brasil",
+  "Chile",
+  "Colombia",
+  "Costa Rica",
+  "Cuba",
+  "Ecuador",
+  "El Salvador",
+  "España",
+  "Estados Unidos",
+  "Francia",
+  "Guatemala",
+  "Honduras",
+  "Inglaterra",
+  "Italia",
+  "México",
+  "Nicaragua",
+  "Panamá",
+  "Paraguay",
+  "Perú",
+  "Portugal",
+  "República Dominicana",
+  "Uruguay",
+  "Venezuela",
+  "Alemania",
+  "Canadá",
+  "Australia",
+  "Nueva Zelanda",
+  "Japón",
+  "Corea del Sur",
+  "China",
+  "India",
+  "Marruecos",
+  "Senegal",
+  "Sudáfrica",
 ];
 
 const COLOR = {
@@ -69,8 +116,20 @@ const FONDO_FORM =
 export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<Direccion>("forward");
-  const [datos, setDatos] = useState<DatosPersonales>({ nombre: "", edad: "", sexo: "" });
+  const [mostrarRechazoTarget, setMostrarRechazoTarget] = useState(false);
+  const [datos, setDatos] = useState<DatosPersonales>({
+    nombre: "",
+    edad: "",
+    sexo: "",
+    paisResidencia: "",
+    nacionalidad: "",
+  });
   const [respuestas, setRespuestas] = useState<Respuestas>({
+    respuesta_1: "",
+    respuesta_2: "",
+    respuesta_3: "",
+  });
+  const [otrosRespuestas, setOtrosRespuestas] = useState<Respuestas>({
     respuesta_1: "",
     respuesta_2: "",
     respuesta_3: "",
@@ -92,7 +151,59 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
     setStep(siguiente);
   };
 
+  const actualizarDato = (campo: keyof DatosPersonales, valor: string) => {
+    setDatos((actual) => ({ ...actual, [campo]: valor }));
+  };
+
+  const actualizarRespuesta = (campo: keyof Respuestas, valor: string) => {
+    setRespuestas((actual) => ({ ...actual, [campo]: valor }));
+
+    if (valor !== OTHER_OPTION) {
+      setOtrosRespuestas((actual) => ({ ...actual, [campo]: "" }));
+    }
+  };
+
+  const resolverValorConOtro = (seleccion: string, detalle: string) => {
+    if (seleccion !== OTHER_OPTION) {
+      return seleccion;
+    }
+
+    return `Otro: ${detalle.trim()}`;
+  };
+
+  const cumpleTargetChile =
+    datos.paisResidencia === TARGET_COUNTRY_LABEL && datos.nacionalidad === TARGET_COUNTRY_LABEL;
+
+  const continuarDesdeDatos = () => {
+    if (cumpleTargetChile) {
+      setMostrarRechazoTarget(false);
+      setError("");
+      ir(1, "forward");
+      return;
+    }
+
+    setMostrarRechazoTarget(true);
+    setError("");
+    ir(1, "forward");
+  };
+
+  const volverPasoAnterior = () => {
+    const pasoPrevio = step - 1;
+    if (pasoPrevio <= 0) {
+      setMostrarRechazoTarget(false);
+    }
+    ir(pasoPrevio, "back");
+  };
+
   const enviar = async () => {
+    if (!cumpleTargetChile) {
+      setMostrarRechazoTarget(true);
+      setError("");
+      setDirection("forward");
+      setStep(1);
+      return;
+    }
+
     setCargando(true);
     setError("");
 
@@ -101,9 +212,11 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
         nombre: datos.nombre,
         edad: Number.parseInt(datos.edad, 10),
         sexo: datos.sexo,
-        respuesta_1: respuestas.respuesta_1,
-        respuesta_2: respuestas.respuesta_2,
-        respuesta_3: respuestas.respuesta_3,
+        pais_residencia: datos.paisResidencia,
+        nacionalidad: datos.nacionalidad,
+        respuesta_1: resolverValorConOtro(respuestas.respuesta_1, otrosRespuestas.respuesta_1),
+        respuesta_2: resolverValorConOtro(respuestas.respuesta_2, otrosRespuestas.respuesta_2),
+        respuesta_3: resolverValorConOtro(respuestas.respuesta_3, otrosRespuestas.respuesta_3),
       };
 
       const response = await fetch("/api/respuestas", {
@@ -116,7 +229,17 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
 
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error ?? "Hubo un error al enviar. Intenta de nuevo.");
+        const backendMessage = data?.error ?? "Hubo un error al enviar. Intenta de nuevo.";
+
+        if (response.status === 403) {
+          setMostrarRechazoTarget(true);
+          setError("");
+          setDirection("forward");
+          setStep(1);
+          return;
+        }
+
+        throw new Error(backendMessage);
       }
 
       setEnviado(true);
@@ -272,19 +395,29 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
                   exit="exit"
                   transition={{ duration: 0.52, ease: [0.22, 1, 0.36, 1] }}
                 >
-                  {step === 0 && <StepDatos datos={datos} onChange={setDatos} onNext={() => ir(1, "forward")} />}
+                  {step === 0 && (
+                    <StepDatos
+                      datos={datos}
+                      onDatoChange={actualizarDato}
+                      onNext={continuarDesdeDatos}
+                    />
+                  )}
 
-                  {step >= 1 && step <= PREGUNTAS.length && (
+                  {step === 1 && mostrarRechazoTarget && <StepRechazoTarget />}
+
+                  {step >= 1 && step <= PREGUNTAS.length && !mostrarRechazoTarget && (
                     <StepPregunta
                       numero={step}
                       total={PREGUNTAS.length}
                       pregunta={PREGUNTAS[step - 1]}
                       valor={respuestas[PREGUNTAS[step - 1].campo]}
-                      onChange={(valor) => {
-                        setRespuestas((actual) => ({ ...actual, [PREGUNTAS[step - 1].campo]: valor }));
+                      valorOtro={otrosRespuestas[PREGUNTAS[step - 1].campo]}
+                      onChange={(valor) => actualizarRespuesta(PREGUNTAS[step - 1].campo, valor)}
+                      onChangeOtro={(valor) => {
+                        setOtrosRespuestas((actual) => ({ ...actual, [PREGUNTAS[step - 1].campo]: valor }));
                       }}
                       onNext={step < PREGUNTAS.length ? () => ir(step + 1, "forward") : enviar}
-                      onBack={() => ir(step - 1, "back")}
+                      onBack={volverPasoAnterior}
                       cargando={cargando}
                       esUltima={step === PREGUNTAS.length}
                     />
@@ -315,14 +448,19 @@ function FooterMinimal() {
 
 function StepDatos({
   datos,
-  onChange,
+  onDatoChange,
   onNext,
 }: {
   datos: DatosPersonales;
-  onChange: (datos: DatosPersonales) => void;
+  onDatoChange: (campo: keyof DatosPersonales, valor: string) => void;
   onNext: () => void;
 }) {
-  const valido = datos.nombre.trim() !== "" && datos.edad !== "" && datos.sexo !== "";
+  const valido =
+    datos.nombre.trim() !== "" &&
+    datos.edad !== "" &&
+    datos.sexo !== "" &&
+    PAISES_OPTS.includes(datos.paisResidencia) &&
+    PAISES_OPTS.includes(datos.nacionalidad);
 
   return (
     <div className="flex flex-col gap-5">
@@ -331,7 +469,10 @@ function StepDatos({
           Antes de empezar
         </h2>
         <p className="mt-1 text-sm" style={{ color: COLOR.textoSecundario }}>
-          Completa nombre, edad y sexo para continuar.
+          Completa nombre, edad, sexo, pais de residencia y nacionalidad.
+        </p>
+        <p className="mt-1 text-xs" style={{ color: COLOR.textoSuave }}>
+          Esta encuesta esta dirigida a personas chilenas residentes en Chile.
         </p>
       </div>
 
@@ -342,7 +483,7 @@ function StepDatos({
             placeholder="Tu nombre"
             value={datos.nombre}
             autoComplete="name"
-            onChange={(e) => onChange({ ...datos, nombre: e.target.value })}
+            onChange={(e) => onDatoChange("nombre", e.target.value)}
             className="w-full min-h-12 rounded-xl px-3.5 py-2.5 text-sm border outline-none transition-colors duration-300 placeholder:text-zinc-400 focus-visible:border-[#A42879]"
             style={{ background: COLOR.blanco, borderColor: COLOR.bordeSuave, color: COLOR.texto }}
           />
@@ -355,10 +496,42 @@ function StepDatos({
             min={1}
             max={120}
             value={datos.edad}
-            onChange={(e) => onChange({ ...datos, edad: e.target.value })}
+            onChange={(e) => onDatoChange("edad", e.target.value)}
             className="w-full min-h-12 rounded-xl px-3.5 py-2.5 text-sm border outline-none transition-colors duration-300 placeholder:text-zinc-400 focus-visible:border-[#A42879]"
             style={{ background: COLOR.blanco, borderColor: COLOR.bordeSuave, color: COLOR.texto }}
           />
+        </Campo>
+
+        <Campo label="Pais de residencia" className="md:col-span-6">
+          <select
+            value={datos.paisResidencia}
+            onChange={(e) => onDatoChange("paisResidencia", e.target.value)}
+            className="w-full min-h-12 rounded-xl px-3.5 py-2.5 text-sm border outline-none transition-colors duration-300 focus-visible:border-[#A42879]"
+            style={{ background: COLOR.blanco, borderColor: COLOR.bordeSuave, color: COLOR.texto }}
+          >
+            <option value="">Selecciona una opcion</option>
+            {PAISES_OPTS.map((pais) => (
+              <option key={pais} value={pais}>
+                {pais}
+              </option>
+            ))}
+          </select>
+        </Campo>
+
+        <Campo label="Nacionalidad" className="md:col-span-6">
+          <select
+            value={datos.nacionalidad}
+            onChange={(e) => onDatoChange("nacionalidad", e.target.value)}
+            className="w-full min-h-12 rounded-xl px-3.5 py-2.5 text-sm border outline-none transition-colors duration-300 focus-visible:border-[#A42879]"
+            style={{ background: COLOR.blanco, borderColor: COLOR.bordeSuave, color: COLOR.texto }}
+          >
+            <option value="">Selecciona una opcion</option>
+            {PAISES_OPTS.map((pais) => (
+              <option key={pais} value={pais}>
+                {pais}
+              </option>
+            ))}
+          </select>
         </Campo>
 
         <Campo label="Sexo" className="md:col-span-12">
@@ -370,7 +543,7 @@ function StepDatos({
                 <button
                   key={item.valor}
                   type="button"
-                  onClick={() => onChange({ ...datos, sexo: item.valor })}
+                  onClick={() => onDatoChange("sexo", item.valor)}
                   className="min-h-11 rounded-xl border px-3 py-2 text-sm font-semibold text-left sm:text-center transition-all duration-300 active:scale-[0.985]"
                   style={
                     seleccionado
@@ -384,6 +557,7 @@ function StepDatos({
             })}
           </div>
         </Campo>
+
       </div>
 
       <BtnPrimario onClick={onNext} disabled={!valido}>
@@ -393,12 +567,29 @@ function StepDatos({
   );
 }
 
+function StepRechazoTarget() {
+  return (
+    <div className="flex flex-col gap-5">
+      <div
+        className="rounded-2xl border px-4 py-5 sm:px-5"
+        style={{ borderColor: "#F2C6C6", background: "#FFF7F7" }}
+      >
+        <p className="text-base sm:text-lg font-bold" style={{ color: "#A8200D" }}>
+          Gracias por tu tiempo.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function StepPregunta({
   numero,
   total,
   pregunta,
   valor,
+  valorOtro,
   onChange,
+  onChangeOtro,
   onNext,
   onBack,
   cargando,
@@ -408,12 +599,18 @@ function StepPregunta({
   total: number;
   pregunta: { texto: string; opciones: string[] };
   valor: string;
+  valorOtro: string;
   onChange: (valor: string) => void;
+  onChangeOtro: (valor: string) => void;
   onNext: () => void;
   onBack: () => void;
   cargando: boolean;
   esUltima: boolean;
 }) {
+  const esOtro = valor === OTHER_OPTION;
+  const opcionValida = valor !== "";
+  const puedeContinuar = opcionValida && (!esOtro || valorOtro.trim() !== "");
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -459,11 +656,24 @@ function StepPregunta({
             </button>
           );
         })}
+
+        {esOtro && (
+          <Campo label="Especifica tu respuesta" className="sm:col-span-2">
+            <input
+              type="text"
+              placeholder="Escribe tu respuesta"
+              value={valorOtro}
+              onChange={(e) => onChangeOtro(e.target.value)}
+              className="w-full min-h-12 rounded-xl px-3.5 py-2.5 text-sm border outline-none transition-colors duration-300 placeholder:text-zinc-400 focus-visible:border-[#A42879]"
+              style={{ background: COLOR.blanco, borderColor: COLOR.bordeSuave, color: COLOR.texto }}
+            />
+          </Campo>
+        )}
       </div>
 
       <div className="flex flex-col-reverse sm:flex-row gap-2.5">
         <BtnSecundario onClick={onBack}>Pregunta anterior</BtnSecundario>
-        <BtnPrimario onClick={onNext} disabled={!valor || cargando}>
+        <BtnPrimario onClick={onNext} disabled={!puedeContinuar || cargando}>
           {cargando ? "Enviando..." : esUltima ? "Enviar respuesta" : "Siguiente"}
         </BtnPrimario>
       </div>
