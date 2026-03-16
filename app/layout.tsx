@@ -12,6 +12,11 @@ const montserrat = Montserrat({
 export const metadata: Metadata = {
   title: "Encuesta Mundial | Agencia VS",
   description: "Encuesta oficial de Agencia VS",
+  icons: {
+    icon: [{ url: "/LogoVs.png", type: "image/png" }],
+    shortcut: "/LogoVs.png",
+    apple: "/LogoVs.png",
+  },
 };
 
 export default function RootLayout({

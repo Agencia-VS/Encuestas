@@ -42,11 +42,17 @@ function normalizarTexto(valor: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function esChile(valor: string): boolean {
+  return normalizarTexto(valor) === TARGET_COUNTRY_LABEL;
+}
+
+function esResidenteEnChile(payload: Payload): boolean {
+  return esChile(payload.pais_residencia);
+}
+
 function esTargetChile(payload: Payload): boolean {
-  return (
-    normalizarTexto(payload.pais_residencia) === TARGET_COUNTRY_LABEL &&
-    normalizarTexto(payload.nacionalidad) === TARGET_COUNTRY_LABEL
-  );
+  // Regla OR: chilenos en Chile, chilenos en el extranjero o migrantes en Chile.
+  return esChile(payload.pais_residencia) || esChile(payload.nacionalidad);
 }
 
 function extraerIp(request: Request): string | null {
@@ -94,18 +100,18 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "Encuesta disponible solo para personas chilenas residentes en Chile.",
+            "Encuesta disponible solo para: chilenos en Chile, chilenos en el extranjero o migrantes en Chile.",
         },
         { status: 403 }
       );
     }
 
     const ipCountryCode = extraerIpCountryCode(request);
-    if (ipCountryCode && ipCountryCode !== TARGET_COUNTRY_CODE) {
+    if (ipCountryCode && esResidenteEnChile(body) && ipCountryCode !== TARGET_COUNTRY_CODE) {
       return NextResponse.json(
         {
           error:
-            "Por segmentacion geografica, esta encuesta solo esta habilitada para IPs de Chile.",
+            "Por segmentacion geografica, quienes residen en Chile deben responder desde IP de Chile.",
         },
         { status: 403 }
       );

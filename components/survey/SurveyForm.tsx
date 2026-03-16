@@ -9,18 +9,18 @@ import { BRAND_TOKENS, getAgencyFarewellLogoUrl, getAgencyLogoUrl } from "@/lib/
 const PREGUNTAS = [
   {
     campo: "respuesta_1" as const,
-    texto: "¿Qué selección quieres que sea campeón del Mundo?",
-    opciones: ["Argentina", "Brasil", "España", "Francia", "Portugal", "Inglaterra", "Otro"],
+    texto: "¿Qué selección quieres que sea campeón del mundo?",
+    opciones: ["Argentina", "Brasil", "España", "Francia", "Portugal", "Inglaterra", "Alemania", "Otro"],
   },
   {
     campo: "respuesta_2" as const,
-    texto: "¿Qué jugador quieres que sea campeón del Mundo?",
-    opciones: ["Messi", "CR7", "Mbappé", "Neymar", "Lamine Yamal", "Valverde", "Otro"],
+    texto: "¿Qué jugador quieres que sea campeón del mundo?",
+    opciones: ["Messi", "CR7", "Mbappé", "Neymar", "Lamine Yamal", "Valverde", "Erling Haaland", "Otro"],
   },
   {
     campo: "respuesta_3" as const,
     texto: "¿Qué selección crees que no cumplirá las expectativas?",
-    opciones: ["Argentina", "Brasil", "España", "Francia", "Portugal", "Uruguay", "Otro"],
+    opciones: ["Argentina", "Brasil", "España", "Francia", "Portugal", "Uruguay", "Inglaterra", "Otro"],
   },
 ];
 
@@ -172,7 +172,7 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
   };
 
   const cumpleTargetChile =
-    datos.paisResidencia === TARGET_COUNTRY_LABEL && datos.nacionalidad === TARGET_COUNTRY_LABEL;
+    datos.paisResidencia === TARGET_COUNTRY_LABEL || datos.nacionalidad === TARGET_COUNTRY_LABEL;
 
   const continuarDesdeDatos = () => {
     if (cumpleTargetChile) {
@@ -403,7 +403,7 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
                     />
                   )}
 
-                  {step === 1 && mostrarRechazoTarget && <StepRechazoTarget />}
+                  {step === 1 && mostrarRechazoTarget && <StepRechazoTarget nombre={datos.nombre} />}
 
                   {step >= 1 && step <= PREGUNTAS.length && !mostrarRechazoTarget && (
                     <StepPregunta
@@ -472,7 +472,7 @@ function StepDatos({
           Completa nombre, edad, sexo, pais de residencia y nacionalidad.
         </p>
         <p className="mt-1 text-xs" style={{ color: COLOR.textoSuave }}>
-          Esta encuesta esta dirigida a personas chilenas residentes en Chile.
+          Esta encuesta esta dirigida a: chilenos en Chile, chilenos en el extranjero o migrantes en Chile.
         </p>
       </div>
 
@@ -567,15 +567,18 @@ function StepDatos({
   );
 }
 
-function StepRechazoTarget() {
+function StepRechazoTarget({ nombre }: { nombre: string }) {
+  const nombreEncuestado = nombre.trim() || "encuestado";
+
   return (
     <div className="flex flex-col gap-5">
       <div
         className="rounded-2xl border px-4 py-5 sm:px-5"
         style={{ borderColor: "#F2C6C6", background: "#FFF7F7" }}
       >
-        <p className="text-base sm:text-lg font-bold" style={{ color: "#A8200D" }}>
-          Gracias por tu tiempo.
+        <p className="text-base sm:text-lg font-bold leading-relaxed" style={{ color: "#A8200D" }}>
+          Hola, {nombreEncuestado}, lamentablemente estamos enfocados a chilenos y gente que reside en Chile.
+          Muchas gracias por tu tiempo.
         </p>
       </div>
     </div>
