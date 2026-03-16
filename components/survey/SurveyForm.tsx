@@ -46,9 +46,12 @@ const TARGET_COUNTRY_LABEL = "Chile";
 const MIN_AGE = 18;
 const RESPONDENT_ID_STORAGE_KEY = "agenciavs_encuesta_respondent_id";
 const RESPONDIO_STORAGE_KEY = "agenciavs_encuesta_respondio";
+const BLOCKED_REGISTER_ENDPOINT = "/api/respuestas/bloqueo";
 const TARGET_BLOCK_MESSAGE = "lamentablemente estamos enfocados a chilenos y gente que reside en Chile.";
 const AGE_BLOCK_MESSAGE = "esta encuesta es para mayores de 18 años.";
-const DUPLICATE_BLOCK_MESSAGE = "ya registramos una respuesta desde este dispositivo.";
+const DUPLICATE_BLOCK_MESSAGE = "Ya registramos una respuesta desde este dispositivo.";
+
+type MotivoBloqueo = "menor_edad" | "fuera_target";
 
 const SEXO_OPTS = [
   { label: "Masculino", valor: "masculino" },
@@ -169,7 +172,12 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
         setRespondentId(generatedId);
       }
 
-      setYaRespondioEsteDispositivo(window.localStorage.getItem(RESPONDIO_STORAGE_KEY) === "1");
+      const alreadyAnswered = window.localStorage.getItem(RESPONDIO_STORAGE_KEY) === "1";
+      setYaRespondioEsteDispositivo(alreadyAnswered);
+
+      if (alreadyAnswered) {
+        setError(DUPLICATE_BLOCK_MESSAGE);
+      }
     } catch {
       // localStorage can be unavailable in some privacy contexts.
     }
@@ -220,14 +228,67 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
     setStep(1);
   };
 
+  const mostrarBloqueoDuplicadoPasoUno = () => {
+    setYaRespondioEsteDispositivo(true);
+    setMostrarRechazoTarget(false);
+    setMensajeRechazo("");
+    setDirection("back");
+    setStep(0);
+    setError(DUPLICATE_BLOCK_MESSAGE);
+  };
+
+  const marcarDispositivoComoRespondido = () => {
+    try {
+      window.localStorage.setItem(RESPONDIO_STORAGE_KEY, "1");
+    } catch {
+      // Best-effort local duplicate guard.
+    }
+
+    setYaRespondioEsteDispositivo(true);
+  };
+
+  const registrarBloqueo = async (motivo: MotivoBloqueo) => {
+    if (!respondentId) {
+      return;
+    }
+
+    const payload = {
+      nombre: datos.nombre,
+      edad: edadNumero,
+      sexo: datos.sexo,
+      pais_residencia: datos.paisResidencia,
+      nacionalidad: datos.nacionalidad,
+      respondent_id: respondentId,
+      motivo_bloqueo: motivo,
+    };
+
+    try {
+      await fetch(BLOCKED_REGISTER_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // If this fails, the local guard still prevents immediate repeat attempts.
+    }
+  };
+
+  const registrarBloqueoYMostrarPasoNegacion = (detalle: string, motivo: MotivoBloqueo) => {
+    marcarDispositivoComoRespondido();
+    mostrarPasoNegacion(detalle);
+    void registrarBloqueo(motivo);
+  };
+
   const continuarDesdeDatos = () => {
     if (yaRespondioEsteDispositivo) {
-      mostrarPasoNegacion(DUPLICATE_BLOCK_MESSAGE);
+      mostrarBloqueoDuplicadoPasoUno();
       return;
     }
 
     if (!cumpleEdadMinima) {
-      mostrarPasoNegacion(AGE_BLOCK_MESSAGE);
+      registrarBloqueoYMostrarPasoNegacion(AGE_BLOCK_MESSAGE, "menor_edad");
       return;
     }
 
@@ -239,7 +300,7 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
       return;
     }
 
-    mostrarPasoNegacion(TARGET_BLOCK_MESSAGE);
+    registrarBloqueoYMostrarPasoNegacion(TARGET_BLOCK_MESSAGE, "fuera_target");
   };
 
   const volverPasoAnterior = () => {
@@ -252,12 +313,12 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
 
   const enviar = async () => {
     if (yaRespondioEsteDispositivo) {
-      mostrarPasoNegacion(DUPLICATE_BLOCK_MESSAGE);
+      mostrarBloqueoDuplicadoPasoUno();
       return;
     }
 
     if (!cumpleEdadMinima) {
-      mostrarPasoNegacion(AGE_BLOCK_MESSAGE);
+      registrarBloqueoYMostrarPasoNegacion(AGE_BLOCK_MESSAGE, "menor_edad");
       return;
     }
 
@@ -267,7 +328,7 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
     }
 
     if (!cumpleTargetChile) {
-      mostrarPasoNegacion(TARGET_BLOCK_MESSAGE);
+      registrarBloqueoYMostrarPasoNegacion(TARGET_BLOCK_MESSAGE, "fuera_target");
       return;
     }
 
@@ -301,17 +362,22 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
 
         if (response.status === 403) {
           if (backendMessage.toLowerCase().includes("mayores de 18") || backendMessage.toLowerCase().includes("edad minima")) {
-            mostrarPasoNegacion(AGE_BLOCK_MESSAGE);
+            registrarBloqueoYMostrarPasoNegacion(AGE_BLOCK_MESSAGE, "menor_edad");
             return;
           }
 
-          mostrarPasoNegacion(TARGET_BLOCK_MESSAGE);
+          registrarBloqueoYMostrarPasoNegacion(TARGET_BLOCK_MESSAGE, "fuera_target");
           return;
         }
 
         if (response.status === 409) {
-          setYaRespondioEsteDispositivo(true);
-          mostrarPasoNegacion(DUPLICATE_BLOCK_MESSAGE);
+          try {
+            window.localStorage.setItem(RESPONDIO_STORAGE_KEY, "1");
+          } catch {
+            // Best-effort local duplicate guard.
+          }
+
+          mostrarBloqueoDuplicadoPasoUno();
           return;
         }
 
@@ -323,13 +389,7 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
         throw new Error(backendMessage);
       }
 
-      try {
-        window.localStorage.setItem(RESPONDIO_STORAGE_KEY, "1");
-      } catch {
-        // Best-effort local duplicate guard.
-      }
-
-      setYaRespondioEsteDispositivo(true);
+      marcarDispositivoComoRespondido();
       setEnviado(true);
     } catch (err) {
       if (err instanceof Error) {
@@ -486,6 +546,7 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
                   {step === 0 && (
                     <StepDatos
                       datos={datos}
+                      yaRespondioEsteDispositivo={yaRespondioEsteDispositivo}
                       onDatoChange={actualizarDato}
                       onNext={continuarDesdeDatos}
                     />
@@ -536,10 +597,12 @@ function FooterMinimal() {
 
 function StepDatos({
   datos,
+  yaRespondioEsteDispositivo,
   onDatoChange,
   onNext,
 }: {
   datos: DatosPersonales;
+  yaRespondioEsteDispositivo: boolean;
   onDatoChange: (campo: keyof DatosPersonales, valor: string) => void;
   onNext: () => void;
 }) {
@@ -552,7 +615,8 @@ function StepDatos({
     edadValida &&
     datos.sexo !== "" &&
     PAISES_OPTS.includes(datos.paisResidencia) &&
-    PAISES_OPTS.includes(datos.nacionalidad);
+    PAISES_OPTS.includes(datos.nacionalidad) &&
+    !yaRespondioEsteDispositivo;
 
   return (
     <div className="flex flex-col gap-5">
@@ -651,8 +715,15 @@ function StepDatos({
         </Campo>
 
       </div>
+
+      {yaRespondioEsteDispositivo && (
+        <p className="text-sm" style={{ color: "#A8200D" }}>
+          {DUPLICATE_BLOCK_MESSAGE}
+        </p>
+      )}
+
       <BtnPrimario onClick={onNext} disabled={!valido}>
-        Continuar
+        {yaRespondioEsteDispositivo ? "Encuesta ya respondida" : "Continuar"}
       </BtnPrimario>
     </div>
   );

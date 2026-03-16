@@ -94,6 +94,14 @@ function extraerIpCountryCode(request: Request): string | null {
   return countryCode.trim().toUpperCase();
 }
 
+function esTablaBloqueosInexistente(errorMessage: string): boolean {
+  const message = errorMessage.toLowerCase();
+  return (
+    message.includes("respuestas_bloqueadas") &&
+    (message.includes("could not find") || message.includes("does not exist"))
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = getSupabaseClient();
@@ -150,6 +158,26 @@ export async function POST(request: Request) {
     }
 
     if (existingResponse) {
+      return NextResponse.json(
+        {
+          error: "Ya registramos una respuesta desde este dispositivo.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const { data: existingBlocked, error: blockedCheckError } = await supabase
+      .from("respuestas_bloqueadas")
+      .select("respondent_id")
+      .eq("respondent_id", body.respondent_id)
+      .limit(1)
+      .maybeSingle();
+
+    if (blockedCheckError && !esTablaBloqueosInexistente(blockedCheckError.message)) {
+      return NextResponse.json({ error: blockedCheckError.message }, { status: 500 });
+    }
+
+    if (existingBlocked) {
       return NextResponse.json(
         {
           error: "Ya registramos una respuesta desde este dispositivo.",

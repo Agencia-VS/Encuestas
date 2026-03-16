@@ -74,6 +74,7 @@ Adicionalmente:
 
 - edad minima: 18 anos
 - doble respuesta: se bloquea por `respondent_id` (identificador por dispositivo)
+- cuando el encuestado queda rechazado (menor de 18 o fuera de target), tambien se registra el bloqueo para impedir nuevos intentos tras recargar
 
 Adicionalmente, cuando el hosting entrega pais por IP (`x-vercel-ip-country`, `cf-ipcountry` o `cloudfront-viewer-country`), el backend valida que sea `CL`.
 
@@ -84,6 +85,10 @@ Si quieres guardar metadatos de IP en la tabla, ejecuta tambien:
 Para habilitar el bloqueo de respuestas duplicadas en base de datos, ejecuta tambien:
 
 - `sql/alter_respuestas_add_respondent_id_unique.sql`
+
+Para registrar rechazos persistentes y evitar que cambien datos tras recargar, ejecuta tambien:
+
+- `sql/create_respuestas_bloqueadas.sql`
 
 ## Stack
 
