@@ -67,14 +67,23 @@ Antes de desplegar, ejecuta en Supabase SQL Editor el script:
 
 La encuesta aplica filtro de target:
 
-- `pais_residencia` debe ser Chile
-- `nacionalidad` debe ser Chile
+- `pais_residencia = Chile` **o** `nacionalidad = Chile`
+- casos permitidos: chilenos en Chile, chilenos en el extranjero y migrantes en Chile
+
+Adicionalmente:
+
+- edad minima: 18 anos
+- doble respuesta: se bloquea por `respondent_id` (identificador por dispositivo)
 
 Adicionalmente, cuando el hosting entrega pais por IP (`x-vercel-ip-country`, `cf-ipcountry` o `cloudfront-viewer-country`), el backend valida que sea `CL`.
 
 Si quieres guardar metadatos de IP en la tabla, ejecuta tambien:
 
 - `sql/alter_respuestas_add_ip_segmentation.sql`
+
+Para habilitar el bloqueo de respuestas duplicadas en base de datos, ejecuta tambien:
+
+- `sql/alter_respuestas_add_respondent_id_unique.sql`
 
 ## Stack
 

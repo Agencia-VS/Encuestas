@@ -7,6 +7,7 @@ type Payload = {
   sexo: string;
   pais_residencia: string;
   nacionalidad: string;
+  respondent_id: string;
   respuesta_1: string;
   respuesta_2: string;
   respuesta_3: string;
@@ -14,6 +15,11 @@ type Payload = {
 
 const TARGET_COUNTRY_LABEL = "chile";
 const TARGET_COUNTRY_CODE = "CL";
+const MIN_AGE = 18;
+
+function esRespondentIdValido(valor: unknown): valor is string {
+  return typeof valor === "string" && valor.trim().length >= 12;
+}
 
 function esTextoValido(valor: unknown): valor is string {
   return typeof valor === "string" && valor.trim().length > 0;
@@ -28,6 +34,7 @@ function esPayloadValido(payload: Partial<Payload>): payload is Payload {
     esTextoValido(payload.sexo) &&
     esTextoValido(payload.pais_residencia) &&
     esTextoValido(payload.nacionalidad) &&
+    esRespondentIdValido(payload.respondent_id) &&
     esTextoValido(payload.respuesta_1) &&
     esTextoValido(payload.respuesta_2) &&
     esTextoValido(payload.respuesta_3)
@@ -96,6 +103,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Datos invalidos." }, { status: 400 });
     }
 
+    if (body.edad < MIN_AGE) {
+      return NextResponse.json({ error: "Esta encuesta es para mayores de 18 anos." }, { status: 403 });
+    }
+
     if (!esTargetChile(body)) {
       return NextResponse.json(
         {
@@ -117,6 +128,36 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: existingResponse, error: duplicateCheckError } = await supabase
+      .from("respuestas")
+      .select("respondent_id")
+      .eq("respondent_id", body.respondent_id)
+      .limit(1)
+      .maybeSingle();
+
+    if (duplicateCheckError) {
+      if (duplicateCheckError.message.includes("respondent_id")) {
+        return NextResponse.json(
+          {
+            error:
+              "Falta la columna respondent_id en la tabla respuestas. Ejecuta sql/alter_respuestas_add_respondent_id_unique.sql.",
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({ error: duplicateCheckError.message }, { status: 500 });
+    }
+
+    if (existingResponse) {
+      return NextResponse.json(
+        {
+          error: "Ya registramos una respuesta desde este dispositivo.",
+        },
+        { status: 409 }
+      );
+    }
+
     const ipAddress = extraerIp(request);
 
     const payloadToInsert = {
@@ -128,11 +169,32 @@ export async function POST(request: Request) {
     const { error } = await supabase.from("respuestas").insert([payloadToInsert]);
 
     if (error) {
+      const errorCode = (error as { code?: string }).code;
+
+      if (errorCode === "23505" || error.message.toLowerCase().includes("duplicate key value")) {
+        return NextResponse.json(
+          {
+            error: "Ya registramos una respuesta desde este dispositivo.",
+          },
+          { status: 409 }
+        );
+      }
+
       if (error.message.includes("pais_residencia") || error.message.includes("nacionalidad")) {
         return NextResponse.json(
           {
             error:
               "Faltan columnas en la tabla respuestas. Agrega pais_residencia y nacionalidad en Supabase para guardar estos datos.",
+          },
+          { status: 500 }
+        );
+      }
+
+      if (error.message.includes("respondent_id")) {
+        return NextResponse.json(
+          {
+            error:
+              "Falta la columna respondent_id en la tabla respuestas. Ejecuta sql/alter_respuestas_add_respondent_id_unique.sql.",
           },
           { status: 500 }
         );

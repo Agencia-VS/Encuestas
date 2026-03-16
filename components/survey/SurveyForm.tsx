@@ -43,6 +43,12 @@ const FORM_LOGO_URL = getAgencyLogoUrl();
 const FAREWELL_LOGO_URL = getAgencyFarewellLogoUrl();
 const OTHER_OPTION = "Otro";
 const TARGET_COUNTRY_LABEL = "Chile";
+const MIN_AGE = 18;
+const RESPONDENT_ID_STORAGE_KEY = "agenciavs_encuesta_respondent_id";
+const RESPONDIO_STORAGE_KEY = "agenciavs_encuesta_respondio";
+const TARGET_BLOCK_MESSAGE = "lamentablemente estamos enfocados a chilenos y gente que reside en Chile.";
+const AGE_BLOCK_MESSAGE = "esta encuesta es para mayores de 18 años.";
+const DUPLICATE_BLOCK_MESSAGE = "ya registramos una respuesta desde este dispositivo.";
 
 const SEXO_OPTS = [
   { label: "Masculino", valor: "masculino" },
@@ -137,11 +143,36 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
   const [enviado, setEnviado] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
+  const [mensajeRechazo, setMensajeRechazo] = useState("");
+  const [respondentId, setRespondentId] = useState("");
+  const [yaRespondioEsteDispositivo, setYaRespondioEsteDispositivo] = useState(false);
 
   useEffect(() => {
     // Warm the cache so the farewell screen logo appears instantly after submit.
     const img = new window.Image();
     img.src = FAREWELL_LOGO_URL;
+  }, []);
+
+  useEffect(() => {
+    try {
+      const storedRespondentId = window.localStorage.getItem(RESPONDENT_ID_STORAGE_KEY);
+
+      if (storedRespondentId) {
+        setRespondentId(storedRespondentId);
+      } else {
+        const generatedId =
+          typeof window.crypto !== "undefined" && "randomUUID" in window.crypto
+            ? window.crypto.randomUUID()
+            : `rid-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+        window.localStorage.setItem(RESPONDENT_ID_STORAGE_KEY, generatedId);
+        setRespondentId(generatedId);
+      }
+
+      setYaRespondioEsteDispositivo(window.localStorage.getItem(RESPONDIO_STORAGE_KEY) === "1");
+    } catch {
+      // localStorage can be unavailable in some privacy contexts.
+    }
   }, []);
 
   const progreso = useMemo(() => ((step + 1) / TOTAL) * 100, [step]);
@@ -173,18 +204,42 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
 
   const cumpleTargetChile =
     datos.paisResidencia === TARGET_COUNTRY_LABEL || datos.nacionalidad === TARGET_COUNTRY_LABEL;
+  const edadNumero = Number.parseInt(datos.edad, 10);
+  const cumpleEdadMinima = Number.isInteger(edadNumero) && edadNumero >= MIN_AGE;
+
+  const construirMensajeRechazo = (detalle: string) => {
+    const nombreEncuestado = datos.nombre.trim() || "encuestado";
+    return `Hola, ${nombreEncuestado}, ${detalle} Muchas gracias por tu tiempo.`;
+  };
+
+  const mostrarPasoNegacion = (detalle: string) => {
+    setMostrarRechazoTarget(true);
+    setMensajeRechazo(construirMensajeRechazo(detalle));
+    setError("");
+    setDirection("forward");
+    setStep(1);
+  };
 
   const continuarDesdeDatos = () => {
+    if (yaRespondioEsteDispositivo) {
+      mostrarPasoNegacion(DUPLICATE_BLOCK_MESSAGE);
+      return;
+    }
+
+    if (!cumpleEdadMinima) {
+      mostrarPasoNegacion(AGE_BLOCK_MESSAGE);
+      return;
+    }
+
     if (cumpleTargetChile) {
       setMostrarRechazoTarget(false);
+      setMensajeRechazo("");
       setError("");
       ir(1, "forward");
       return;
     }
 
-    setMostrarRechazoTarget(true);
-    setError("");
-    ir(1, "forward");
+    mostrarPasoNegacion(TARGET_BLOCK_MESSAGE);
   };
 
   const volverPasoAnterior = () => {
@@ -196,11 +251,23 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
   };
 
   const enviar = async () => {
+    if (yaRespondioEsteDispositivo) {
+      mostrarPasoNegacion(DUPLICATE_BLOCK_MESSAGE);
+      return;
+    }
+
+    if (!cumpleEdadMinima) {
+      mostrarPasoNegacion(AGE_BLOCK_MESSAGE);
+      return;
+    }
+
+    if (!respondentId) {
+      setError("No se pudo validar este dispositivo. Recarga la página e intenta nuevamente.");
+      return;
+    }
+
     if (!cumpleTargetChile) {
-      setMostrarRechazoTarget(true);
-      setError("");
-      setDirection("forward");
-      setStep(1);
+      mostrarPasoNegacion(TARGET_BLOCK_MESSAGE);
       return;
     }
 
@@ -210,10 +277,11 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
     try {
       const payload = {
         nombre: datos.nombre,
-        edad: Number.parseInt(datos.edad, 10),
+        edad: edadNumero,
         sexo: datos.sexo,
         pais_residencia: datos.paisResidencia,
         nacionalidad: datos.nacionalidad,
+        respondent_id: respondentId,
         respuesta_1: resolverValorConOtro(respuestas.respuesta_1, otrosRespuestas.respuesta_1),
         respuesta_2: resolverValorConOtro(respuestas.respuesta_2, otrosRespuestas.respuesta_2),
         respuesta_3: resolverValorConOtro(respuestas.respuesta_3, otrosRespuestas.respuesta_3),
@@ -232,16 +300,36 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
         const backendMessage = data?.error ?? "Hubo un error al enviar. Intenta de nuevo.";
 
         if (response.status === 403) {
-          setMostrarRechazoTarget(true);
-          setError("");
-          setDirection("forward");
-          setStep(1);
+          if (backendMessage.toLowerCase().includes("mayores de 18") || backendMessage.toLowerCase().includes("edad minima")) {
+            mostrarPasoNegacion(AGE_BLOCK_MESSAGE);
+            return;
+          }
+
+          mostrarPasoNegacion(TARGET_BLOCK_MESSAGE);
+          return;
+        }
+
+        if (response.status === 409) {
+          setYaRespondioEsteDispositivo(true);
+          mostrarPasoNegacion(DUPLICATE_BLOCK_MESSAGE);
+          return;
+        }
+
+        if (response.status === 400 && backendMessage.toLowerCase().includes("edad minima")) {
+          mostrarPasoNegacion(AGE_BLOCK_MESSAGE);
           return;
         }
 
         throw new Error(backendMessage);
       }
 
+      try {
+        window.localStorage.setItem(RESPONDIO_STORAGE_KEY, "1");
+      } catch {
+        // Best-effort local duplicate guard.
+      }
+
+      setYaRespondioEsteDispositivo(true);
       setEnviado(true);
     } catch (err) {
       if (err instanceof Error) {
@@ -403,7 +491,7 @@ export function SurveyForm({ onBackToLanding }: SurveyFormProps) {
                     />
                   )}
 
-                  {step === 1 && mostrarRechazoTarget && <StepRechazoTarget nombre={datos.nombre} />}
+                  {step === 1 && mostrarRechazoTarget && <StepRechazoTarget mensaje={mensajeRechazo} />}
 
                   {step >= 1 && step <= PREGUNTAS.length && !mostrarRechazoTarget && (
                     <StepPregunta
@@ -455,9 +543,13 @@ function StepDatos({
   onDatoChange: (campo: keyof DatosPersonales, valor: string) => void;
   onNext: () => void;
 }) {
+  const edadNumero = Number.parseInt(datos.edad, 10);
+  const edadValida = Number.isInteger(edadNumero) && edadNumero > 0;
+
   const valido =
     datos.nombre.trim() !== "" &&
     datos.edad !== "" &&
+    edadValida &&
     datos.sexo !== "" &&
     PAISES_OPTS.includes(datos.paisResidencia) &&
     PAISES_OPTS.includes(datos.nacionalidad);
@@ -559,7 +651,6 @@ function StepDatos({
         </Campo>
 
       </div>
-
       <BtnPrimario onClick={onNext} disabled={!valido}>
         Continuar
       </BtnPrimario>
@@ -567,9 +658,7 @@ function StepDatos({
   );
 }
 
-function StepRechazoTarget({ nombre }: { nombre: string }) {
-  const nombreEncuestado = nombre.trim() || "encuestado";
-
+function StepRechazoTarget({ mensaje }: { mensaje: string }) {
   return (
     <div className="flex flex-col gap-5">
       <div
@@ -577,8 +666,7 @@ function StepRechazoTarget({ nombre }: { nombre: string }) {
         style={{ borderColor: "#F2C6C6", background: "#FFF7F7" }}
       >
         <p className="text-base sm:text-lg font-bold leading-relaxed" style={{ color: "#A8200D" }}>
-          Hola, {nombreEncuestado}, lamentablemente estamos enfocados a chilenos y gente que reside en Chile.
-          Muchas gracias por tu tiempo.
+          {mensaje || "Gracias por tu tiempo."}
         </p>
       </div>
     </div>
