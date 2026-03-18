@@ -5,24 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { CORPORATE_COLORS } from "@/lib/colors";
 import { BRAND_TOKENS, getAgencyFarewellLogoUrl, getAgencyLogoUrl } from "@/lib/branding";
-
-const PREGUNTAS = [
-  {
-    campo: "respuesta_1" as const,
-    texto: "¿Qué selección quieres que sea campeón del mundo?",
-    opciones: ["Argentina", "Brasil", "España", "Francia", "Portugal", "Inglaterra", "Alemania", "Otro"],
-  },
-  {
-    campo: "respuesta_2" as const,
-    texto: "¿Qué jugador quieres que sea campeón del mundo?",
-    opciones: ["Messi", "CR7", "Mbappé", "Neymar", "Lamine Yamal", "Valverde", "Erling Haaland", "Otro"],
-  },
-  {
-    campo: "respuesta_3" as const,
-    texto: "¿Qué selección crees que no cumplirá las expectativas?",
-    opciones: ["Argentina", "Brasil", "España", "Francia", "Portugal", "Uruguay", "Inglaterra", "Otro"],
-  },
-];
+import { OTHER_OPTION, PREGUNTAS, type OpcionPregunta } from "@/lib/survey/questions";
 
 type Direccion = "forward" | "back";
 type DatosPersonales = {
@@ -41,7 +24,6 @@ type SurveyFormProps = {
 const TOTAL = 1 + PREGUNTAS.length;
 const FORM_LOGO_URL = getAgencyLogoUrl();
 const FAREWELL_LOGO_URL = getAgencyFarewellLogoUrl();
-const OTHER_OPTION = "Otro";
 const TARGET_COUNTRY_LABEL = "Chile";
 const MIN_AGE = 18;
 const RESPONDENT_ID_STORAGE_KEY = "agenciavs_encuesta_respondent_id";
@@ -759,7 +741,7 @@ function StepPregunta({
 }: {
   numero: number;
   total: number;
-  pregunta: { texto: string; opciones: string[] };
+  pregunta: { texto: string; opciones: OpcionPregunta[] };
   valor: string;
   valorOtro: string;
   onChange: (valor: string) => void;
@@ -788,13 +770,15 @@ function StepPregunta({
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-        {pregunta.opciones.map((opcion) => {
-          const seleccionado = valor === opcion;
+        {pregunta.opciones.map((opcionConfig) => {
+          const opcionValor = typeof opcionConfig === "string" ? opcionConfig : opcionConfig.value;
+          const opcionLabel = typeof opcionConfig === "string" ? opcionConfig : opcionConfig.label;
+          const seleccionado = valor === opcionValor;
 
           return (
             <button
-              key={opcion}
-              onClick={() => onChange(opcion)}
+              key={opcionValor}
+              onClick={() => onChange(opcionValor)}
               className="h-full w-full min-h-12 text-left px-3.5 py-2.5 rounded-xl border text-sm font-medium transition-all duration-300 active:scale-[0.99]"
               style={
                 seleccionado
@@ -813,7 +797,7 @@ function StepPregunta({
                 >
                   {seleccionado && <span className="w-2 h-2 rounded-full" style={{ background: COLOR.blanco }} />}
                 </span>
-                {opcion}
+                {opcionLabel}
               </span>
             </button>
           );

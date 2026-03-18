@@ -90,6 +90,32 @@ Para registrar rechazos persistentes y evitar que cambien datos tras recargar, e
 
 - `sql/create_respuestas_bloqueadas.sql`
 
+## E2E seguro en el mismo proyecto Supabase
+
+Si quieres correr pruebas E2E sin tocar datos productivos, usa tablas espejo.
+
+1. Ejecuta en Supabase SQL Editor:
+
+- `sql/create_e2e_tables.sql`
+
+2. Configura variables de entorno para apuntar a tablas E2E:
+
+```bash
+SUPABASE_RESPUESTAS_TABLE=respuestas_e2e
+SUPABASE_RESPUESTAS_BLOQUEADAS_TABLE=respuestas_bloqueadas_e2e
+```
+
+3. Ejecuta pruebas E2E:
+
+```bash
+npm run test:e2e
+```
+
+Notas:
+
+- La suite E2E tiene un bloqueo de seguridad: si detecta tablas productivas (`respuestas` o `respuestas_bloqueadas`), falla para evitar escrituras accidentales.
+- El backend usa por defecto tablas productivas; solo cambia a E2E cuando defines las variables anteriores.
+
 ## Stack
 
 - Next.js App Router

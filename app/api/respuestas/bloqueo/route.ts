@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
+import { getDefaultSupabaseTables, getSupabaseTables } from "@/lib/supabaseTables";
 
 type MotivoBloqueo = "menor_edad" | "fuera_target";
 
@@ -14,6 +15,7 @@ type PayloadBloqueo = {
 };
 
 const MOTIVOS_PERMITIDOS: MotivoBloqueo[] = ["menor_edad", "fuera_target"];
+const DEFAULT_TABLES = getDefaultSupabaseTables();
 
 function esTextoValido(valor: unknown): valor is string {
   return typeof valor === "string" && valor.trim().length > 0;
@@ -73,17 +75,26 @@ function extraerIpCountryCode(request: Request): string | null {
   return countryCode.trim().toUpperCase();
 }
 
-function esTablaBloqueosInexistente(errorMessage: string): boolean {
+function esTablaBloqueosInexistente(errorMessage: string, tableName: string): boolean {
   const message = errorMessage.toLowerCase();
   return (
-    message.includes("respuestas_bloqueadas") &&
+    (message.includes(tableName.toLowerCase()) || message.includes(`public.${tableName.toLowerCase()}`)) &&
     (message.includes("could not find") || message.includes("does not exist"))
   );
+}
+
+function mensajeTablaBloqueosFaltante(tableName: string): string {
+  if (tableName === DEFAULT_TABLES.respuestasBloqueadas) {
+    return "Falta la tabla respuestas_bloqueadas. Ejecuta sql/create_respuestas_bloqueadas.sql para habilitar el bloqueo persistente.";
+  }
+
+  return `Falta la tabla ${tableName}. Crea una tabla espejo para E2E (puedes usar sql/create_e2e_tables.sql).`;
 }
 
 export async function POST(request: Request) {
   try {
     const supabase = getSupabaseClient();
+    const tables = getSupabaseTables();
     const body = (await request.json()) as Partial<PayloadBloqueo>;
 
     if (!esPayloadValido(body)) {
@@ -91,7 +102,7 @@ export async function POST(request: Request) {
     }
 
     const { data: existingResponse, error: existingResponseError } = await supabase
-      .from("respuestas")
+      .from(tables.respuestas)
       .select("respondent_id")
       .eq("respondent_id", body.respondent_id)
       .limit(1)
@@ -106,18 +117,17 @@ export async function POST(request: Request) {
     }
 
     const { data: existingBlocked, error: existingBlockedError } = await supabase
-      .from("respuestas_bloqueadas")
+      .from(tables.respuestasBloqueadas)
       .select("respondent_id")
       .eq("respondent_id", body.respondent_id)
       .limit(1)
       .maybeSingle();
 
     if (existingBlockedError) {
-      if (esTablaBloqueosInexistente(existingBlockedError.message)) {
+      if (esTablaBloqueosInexistente(existingBlockedError.message, tables.respuestasBloqueadas)) {
         return NextResponse.json(
           {
-            error:
-              "Falta la tabla respuestas_bloqueadas. Ejecuta sql/create_respuestas_bloqueadas.sql para habilitar el bloqueo persistente.",
+            error: mensajeTablaBloqueosFaltante(tables.respuestasBloqueadas),
           },
           { status: 500 }
         );
@@ -142,7 +152,7 @@ export async function POST(request: Request) {
       ip_country: extraerIpCountryCode(request),
     };
 
-    const { error } = await supabase.from("respuestas_bloqueadas").insert([payloadToInsert]);
+    const { error } = await supabase.from(tables.respuestasBloqueadas).insert([payloadToInsert]);
 
     if (error) {
       const errorCode = (error as { code?: string }).code;
@@ -150,11 +160,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true, alreadyRecorded: true }, { status: 200 });
       }
 
-      if (esTablaBloqueosInexistente(error.message)) {
+      if (esTablaBloqueosInexistente(error.message, tables.respuestasBloqueadas)) {
         return NextResponse.json(
           {
-            error:
-              "Falta la tabla respuestas_bloqueadas. Ejecuta sql/create_respuestas_bloqueadas.sql para habilitar el bloqueo persistente.",
+            error: mensajeTablaBloqueosFaltante(tables.respuestasBloqueadas),
           },
           { status: 500 }
         );

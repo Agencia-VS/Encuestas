@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
+import { getDefaultSupabaseTables, getSupabaseTables } from "@/lib/supabaseTables";
 
 type Payload = {
   nombre: string;
@@ -16,6 +17,7 @@ type Payload = {
 const TARGET_COUNTRY_LABEL = "chile";
 const TARGET_COUNTRY_CODE = "CL";
 const MIN_AGE = 18;
+const DEFAULT_TABLES = getDefaultSupabaseTables();
 
 function esRespondentIdValido(valor: unknown): valor is string {
   return typeof valor === "string" && valor.trim().length >= 12;
@@ -94,17 +96,34 @@ function extraerIpCountryCode(request: Request): string | null {
   return countryCode.trim().toUpperCase();
 }
 
-function esTablaBloqueosInexistente(errorMessage: string): boolean {
+function esTablaBloqueosInexistente(errorMessage: string, tableName: string): boolean {
   const message = errorMessage.toLowerCase();
   return (
-    message.includes("respuestas_bloqueadas") &&
+    (message.includes(tableName.toLowerCase()) || message.includes(`public.${tableName.toLowerCase()}`)) &&
     (message.includes("could not find") || message.includes("does not exist"))
   );
+}
+
+function mensajeFaltaRespondentId(tableName: string): string {
+  if (tableName === DEFAULT_TABLES.respuestas) {
+    return "Falta la columna respondent_id en la tabla respuestas. Ejecuta sql/alter_respuestas_add_respondent_id_unique.sql.";
+  }
+
+  return `Falta la columna respondent_id en la tabla ${tableName}. Crea esa columna y agrega un indice unique, o replica sql/alter_respuestas_add_respondent_id_unique.sql para tu tabla E2E.`;
+}
+
+function mensajeFaltaColumnasTarget(tableName: string): string {
+  if (tableName === DEFAULT_TABLES.respuestas) {
+    return "Faltan columnas en la tabla respuestas. Agrega pais_residencia y nacionalidad en Supabase para guardar estos datos.";
+  }
+
+  return `Faltan columnas (pais_residencia y/o nacionalidad) en la tabla ${tableName}. Replica esas columnas en tu tabla E2E.`;
 }
 
 export async function POST(request: Request) {
   try {
     const supabase = getSupabaseClient();
+    const tables = getSupabaseTables();
     const body = (await request.json()) as Partial<Payload>;
 
     if (!esPayloadValido(body)) {
@@ -137,7 +156,7 @@ export async function POST(request: Request) {
     }
 
     const { data: existingResponse, error: duplicateCheckError } = await supabase
-      .from("respuestas")
+      .from(tables.respuestas)
       .select("respondent_id")
       .eq("respondent_id", body.respondent_id)
       .limit(1)
@@ -147,8 +166,7 @@ export async function POST(request: Request) {
       if (duplicateCheckError.message.includes("respondent_id")) {
         return NextResponse.json(
           {
-            error:
-              "Falta la columna respondent_id en la tabla respuestas. Ejecuta sql/alter_respuestas_add_respondent_id_unique.sql.",
+            error: mensajeFaltaRespondentId(tables.respuestas),
           },
           { status: 500 }
         );
@@ -167,13 +185,13 @@ export async function POST(request: Request) {
     }
 
     const { data: existingBlocked, error: blockedCheckError } = await supabase
-      .from("respuestas_bloqueadas")
+      .from(tables.respuestasBloqueadas)
       .select("respondent_id")
       .eq("respondent_id", body.respondent_id)
       .limit(1)
       .maybeSingle();
 
-    if (blockedCheckError && !esTablaBloqueosInexistente(blockedCheckError.message)) {
+    if (blockedCheckError && !esTablaBloqueosInexistente(blockedCheckError.message, tables.respuestasBloqueadas)) {
       return NextResponse.json({ error: blockedCheckError.message }, { status: 500 });
     }
 
@@ -194,7 +212,7 @@ export async function POST(request: Request) {
       ip_country: ipCountryCode,
     };
 
-    const { error } = await supabase.from("respuestas").insert([payloadToInsert]);
+    const { error } = await supabase.from(tables.respuestas).insert([payloadToInsert]);
 
     if (error) {
       const errorCode = (error as { code?: string }).code;
@@ -211,8 +229,7 @@ export async function POST(request: Request) {
       if (error.message.includes("pais_residencia") || error.message.includes("nacionalidad")) {
         return NextResponse.json(
           {
-            error:
-              "Faltan columnas en la tabla respuestas. Agrega pais_residencia y nacionalidad en Supabase para guardar estos datos.",
+            error: mensajeFaltaColumnasTarget(tables.respuestas),
           },
           { status: 500 }
         );
@@ -221,15 +238,14 @@ export async function POST(request: Request) {
       if (error.message.includes("respondent_id")) {
         return NextResponse.json(
           {
-            error:
-              "Falta la columna respondent_id en la tabla respuestas. Ejecuta sql/alter_respuestas_add_respondent_id_unique.sql.",
+            error: mensajeFaltaRespondentId(tables.respuestas),
           },
           { status: 500 }
         );
       }
 
       if (error.message.includes("ip_address") || error.message.includes("ip_country")) {
-        const { error: fallbackError } = await supabase.from("respuestas").insert([body]);
+        const { error: fallbackError } = await supabase.from(tables.respuestas).insert([body]);
 
         if (!fallbackError) {
           return NextResponse.json({ ok: true }, { status: 201 });

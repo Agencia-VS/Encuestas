@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
+import { getSupabaseTables } from "@/lib/supabaseTables";
 
 type RespuestaRow = {
   created_at: string | null;
@@ -18,9 +19,9 @@ type QuestionConfig = {
 };
 
 const QUESTION_CONFIG: QuestionConfig[] = [
-  { id: "respuesta_1", title: "Que seleccion quieres que sea campeon del Mundo?" },
-  { id: "respuesta_2", title: "Que jugador quieres que sea campeon del Mundo?" },
-  { id: "respuesta_3", title: "Que seleccion crees que no cumplira las expectativas?" },
+  { id: "respuesta_1", title: "¿Qué selección quieres que sea campeón del mundo?" },
+  { id: "respuesta_2", title: "¿Qué jugador quieres que sea campeón del mundo?" },
+  { id: "respuesta_3", title: "¿Qué selección crees que no cumplirá las expectativas?" },
 ];
 
 const AGE_BUCKETS = [
@@ -53,19 +54,66 @@ function toTitleCase(raw: string): string {
     .join(" ");
 }
 
-function normalizeAnswer(raw: string | null | undefined): string {
+function stripDiacritics(raw: string): string {
+  return raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function toCanonicalLabel(raw: string): string {
+  if (!raw) {
+    return "No especifica";
+  }
+
+  return raw
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^[a-z]{1,6}\d+$/i.test(part) || /^\d+[a-z]+$/i.test(part)) {
+        return part.toUpperCase();
+      }
+
+      if (/^[A-Z0-9]{2,3}$/.test(part)) {
+        return part;
+      }
+
+      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+export function answerGroupKey(raw: string): string {
+  return stripDiacritics(raw)
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s*:\s*/g, ":")
+    .replace(/:+$/, "")
+    .toLowerCase();
+}
+
+export function normalizeAnswer(raw: string | null | undefined): string {
   if (!raw || raw.trim().length === 0) {
     return "No especifica";
   }
 
-  const clean = raw.trim();
-  const normalized = clean.replace(/:+$/, "").toLowerCase();
+  const clean = raw.trim().replace(/\s+/g, " ");
+  const cleanNoTrailingColons = clean.replace(/:+$/, "");
+  const normalized = answerGroupKey(cleanNoTrailingColons);
 
-  if (normalized === "otro" || normalized === "otra") {
+  if (normalized === "otro" || normalized === "otra" || normalized === "otros" || normalized === "otras") {
     return "Otro";
   }
 
-  return clean;
+  const otherWithDetailMatch = cleanNoTrailingColons.match(/^otr[ao]s?\b\s*:?\s*(.+)$/i);
+  if (otherWithDetailMatch) {
+    const detail = otherWithDetailMatch[1].trim();
+
+    if (detail.length === 0) {
+      return "Otro";
+    }
+
+    return `Otro: ${toCanonicalLabel(detail)}`;
+  }
+
+  return toCanonicalLabel(cleanNoTrailingColons);
 }
 
 function percentage(count: number, total: number): number {
@@ -109,6 +157,7 @@ export async function GET(request: Request) {
     const allowedEmails = parseAllowedEmails(process.env.ADMIN_ALLOWED_EMAILS);
 
     const supabase = getSupabaseClient();
+    const tables = getSupabaseTables();
 
     const { data: authData, error: authError } = await supabase.auth.getUser(token);
     if (authError || !authData.user) {
@@ -122,7 +171,7 @@ export async function GET(request: Request) {
     }
 
     const { data, error } = await supabase
-      .from("respuestas")
+      .from(tables.respuestas)
       .select("created_at, edad, sexo, respuesta_1, respuesta_2, respuesta_3");
 
     if (error) {
@@ -144,10 +193,10 @@ export async function GET(request: Request) {
 
     const sexoMap = new Map<string, number>();
     const ageMap = new Map<string, number>();
-    const questionMaps: Record<QuestionKey, Map<string, number>> = {
-      respuesta_1: new Map<string, number>(),
-      respuesta_2: new Map<string, number>(),
-      respuesta_3: new Map<string, number>(),
+    const questionMaps: Record<QuestionKey, Map<string, { option: string; count: number }>> = {
+      respuesta_1: new Map<string, { option: string; count: number }>(),
+      respuesta_2: new Map<string, { option: string; count: number }>(),
+      respuesta_3: new Map<string, { option: string; count: number }>(),
     };
 
     const answeredCount: Record<QuestionKey, number> = {
@@ -188,19 +237,26 @@ export async function GET(request: Request) {
 
       for (const question of QUESTION_CONFIG) {
         const answer = normalizeAnswer(row[question.id]);
+        const key = answerGroupKey(answer);
         answeredCount[question.id] += 1;
-        questionMaps[question.id].set(answer, (questionMaps[question.id].get(answer) ?? 0) + 1);
+
+        const existing = questionMaps[question.id].get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          questionMaps[question.id].set(key, { option: answer, count: 1 });
+        }
       }
     }
 
     const totalResponses = rows.length;
 
     const questions = QUESTION_CONFIG.map((question) => {
-      const answers = Array.from(questionMaps[question.id].entries())
-        .map(([option, count]) => ({
-          option,
-          count,
-          percentage: percentage(count, answeredCount[question.id]),
+      const answers = Array.from(questionMaps[question.id].values())
+        .map((value) => ({
+          option: value.option,
+          count: value.count,
+          percentage: percentage(value.count, answeredCount[question.id]),
         }))
         .sort((a, b) => b.count - a.count);
 
