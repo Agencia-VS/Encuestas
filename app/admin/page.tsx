@@ -23,6 +23,7 @@ type Overview = {
   totalToday: number;
   totalLast7Days: number;
   averageDaily7: number;
+  activeDaysForAverage: number;
 };
 
 type GroupStat = {
@@ -81,6 +82,26 @@ function formatDateLabel(isoDate: string): string {
   }
 
   return date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" });
+}
+
+function formatActiveDaysLabel(days: number): string {
+  if (days <= 0) {
+    return "0 dias activos";
+  }
+
+  if (days === 1) {
+    return "1 dia activo";
+  }
+
+  return `${days} dias activos`;
+}
+
+function formatTrendWindowLabel(days: number): string {
+  if (days >= 14) {
+    return "Ultimos 14 dias";
+  }
+
+  return `Desde inicio (${formatActiveDaysLabel(days)})`;
 }
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -419,7 +440,7 @@ export default function AdminPage() {
         title: "General",
         tabs: [
           { id: "overview", label: "Resumen", helper: "KPIs generales" },
-          { id: "trend", label: "Tendencia", helper: "Ultimos 14 dias" },
+          { id: "trend", label: "Tendencia", helper: formatTrendWindowLabel(stats.trend14d.length) },
         ],
       },
       {
@@ -745,11 +766,22 @@ export default function AdminPage() {
               <div className="min-w-0 space-y-3">
               {activeTab === "overview" && (
                 <>
-                  <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                     <StatCard label="Total respuestas" value={stats.overview.totalResponses} />
                     <StatCard label="Respuestas hoy" value={stats.overview.totalToday} />
-                    <StatCard label="Ultimos 7 dias" value={stats.overview.totalLast7Days} />
-                    <StatCard label="Promedio diario (7d)" value={stats.overview.averageDaily7} />
+                    <StatCard
+                      label={
+                        stats.overview.activeDaysForAverage >= 7
+                          ? "Ultimos 7 dias"
+                          : `Desde inicio (${formatActiveDaysLabel(stats.overview.activeDaysForAverage)})`
+                      }
+                      value={stats.overview.totalLast7Days}
+                    />
+                    <StatCard
+                      label={`Promedio diario (${formatActiveDaysLabel(stats.overview.activeDaysForAverage)})`}
+                      value={stats.overview.averageDaily7}
+                    />
+                    <StatCard label="Dias activos considerados" value={stats.overview.activeDaysForAverage} />
                   </section>
 
                   <article
@@ -849,7 +881,7 @@ export default function AdminPage() {
                   style={{ borderColor: "#E2D5F1", background: "#FFFFFF" }}
                 >
                   <h2 className="text-sm sm:text-base font-bold" style={{ color: "#252626" }}>
-                    Tendencia (ultimos 14 dias)
+                    Tendencia ({formatTrendWindowLabel(stats.trend14d.length).toLowerCase()})
                   </h2>
 
                   <div className="mt-3">

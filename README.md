@@ -44,6 +44,9 @@ SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
 
 # Opcional: restringe el admin a correos especificos
 ADMIN_ALLOWED_EMAILS=admin1@tu-dominio.com,admin2@tu-dominio.com
+
+# Opcional: fecha de inicio de la encuesta para KPIs (formato YYYY-MM-DD)
+SURVEY_START_DATE=2026-03-18
 ```
 
 Notas:
@@ -51,6 +54,9 @@ Notas:
 - El login en `/admin` usa usuario/contrasena de Supabase Auth.
 - Si defines `ADMIN_ALLOWED_EMAILS`, solo esos correos pueden obtener stats del endpoint `/api/admin/stats`.
 - Si no defines `ADMIN_ALLOWED_EMAILS`, cualquier usuario autenticado en tu proyecto de Supabase puede entrar al panel.
+- Si defines `SURVEY_START_DATE`, el KPI de promedio diario usa dias activos desde esa fecha (con tope de 7 dias).
+- Si defines `SURVEY_START_DATE`, la tab Tendencia tambien muestra solo dias activos (con tope de 14 dias).
+- Si no defines `SURVEY_START_DATE`, el backend intenta inferir la fecha de inicio desde la primera respuesta registrada.
 
 ## Tabla respuestas
 

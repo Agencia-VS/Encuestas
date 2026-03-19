@@ -128,15 +128,63 @@ function dayKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function buildTrendTemplate(days: number): Map<string, number> {
-  const template = new Map<string, number>();
-  const cursor = new Date();
-  cursor.setHours(0, 0, 0, 0);
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-  for (let i = days - 1; i >= 0; i -= 1) {
-    const current = new Date(cursor);
-    current.setDate(cursor.getDate() - i);
-    template.set(dayKey(current), 0);
+function startOfDay(date: Date): Date {
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+}
+
+function parseSurveyStartDate(raw: string | undefined): Date | null {
+  if (!raw) {
+    return null;
+  }
+
+  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymdMatch) {
+    const year = Number(ymdMatch[1]);
+    const month = Number(ymdMatch[2]);
+    const day = Number(ymdMatch[3]);
+    const parsed = new Date(year, month - 1, day);
+
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    return startOfDay(parsed);
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return startOfDay(parsed);
+}
+
+export function calculateActiveDaysInWindow(todayStart: Date, windowStart: Date, surveyStart: Date | null): number {
+  const effectiveStart = surveyStart && surveyStart > windowStart ? surveyStart : windowStart;
+
+  if (effectiveStart > todayStart) {
+    return 0;
+  }
+
+  return Math.floor((todayStart.getTime() - effectiveStart.getTime()) / MS_PER_DAY) + 1;
+}
+
+function buildTrendTemplate(startDate: Date, endDate: Date): Map<string, number> {
+  const template = new Map<string, number>();
+  const cursor = startOfDay(startDate);
+  const lastDay = startOfDay(endDate);
+
+  if (cursor > lastDay) {
+    return template;
+  }
+
+  while (cursor <= lastDay) {
+    template.set(dayKey(cursor), 0);
+    cursor.setDate(cursor.getDate() + 1);
   }
 
   return template;
@@ -180,16 +228,20 @@ export async function GET(request: Request) {
 
     const rows = ((data ?? []) as RespuestaRow[]).filter(Boolean);
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    const todayStart = startOfDay(new Date());
 
     const weekStart = new Date(todayStart);
     weekStart.setDate(todayStart.getDate() - 6);
 
-    const trend = buildTrendTemplate(14);
+    const trendWindowStart = new Date(todayStart);
+    trendWindowStart.setDate(todayStart.getDate() - 13);
+
+    const configuredSurveyStart = parseSurveyStartDate(process.env.SURVEY_START_DATE);
 
     let totalToday = 0;
     let totalLast7Days = 0;
+    let firstResponseDay: Date | null = null;
+    const trendCountByDay = new Map<string, number>();
 
     const sexoMap = new Map<string, number>();
     const ageMap = new Map<string, number>();
@@ -209,6 +261,12 @@ export async function GET(request: Request) {
       if (row.created_at) {
         const createdAt = new Date(row.created_at);
         if (!Number.isNaN(createdAt.getTime())) {
+          const createdAtDay = startOfDay(createdAt);
+
+          if (!firstResponseDay || createdAtDay < firstResponseDay) {
+            firstResponseDay = createdAtDay;
+          }
+
           if (createdAt >= todayStart) {
             totalToday += 1;
           }
@@ -217,9 +275,7 @@ export async function GET(request: Request) {
           }
 
           const key = dayKey(createdAt);
-          if (trend.has(key)) {
-            trend.set(key, (trend.get(key) ?? 0) + 1);
-          }
+          trendCountByDay.set(key, (trendCountByDay.get(key) ?? 0) + 1);
         }
       }
 
@@ -246,6 +302,24 @@ export async function GET(request: Request) {
         } else {
           questionMaps[question.id].set(key, { option: answer, count: 1 });
         }
+      }
+    }
+
+    const surveyStart = configuredSurveyStart ?? firstResponseDay;
+    const activeDaysForAverage = surveyStart
+      ? calculateActiveDaysInWindow(todayStart, weekStart, surveyStart)
+      : 7;
+
+    const averageDaily7 = activeDaysForAverage > 0
+      ? Number((totalLast7Days / activeDaysForAverage).toFixed(1))
+      : 0;
+
+    const trendStart = surveyStart && surveyStart > trendWindowStart ? surveyStart : trendWindowStart;
+    const trend = buildTrendTemplate(trendStart, todayStart);
+
+    for (const [key, count] of trendCountByDay.entries()) {
+      if (trend.has(key)) {
+        trend.set(key, count);
       }
     }
 
@@ -285,7 +359,8 @@ export async function GET(request: Request) {
           totalResponses,
           totalToday,
           totalLast7Days,
-          averageDaily7: Number((totalLast7Days / 7).toFixed(1)),
+          activeDaysForAverage,
+          averageDaily7,
         },
         demographics: {
           sexo,
