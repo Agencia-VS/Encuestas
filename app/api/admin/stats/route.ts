@@ -24,6 +24,8 @@ const QUESTION_CONFIG: QuestionConfig[] = [
   { id: "respuesta_3", title: "¿Qué selección crees que no cumplirá las expectativas?" },
 ];
 
+const SUPABASE_BATCH_SIZE = 1000;
+
 const AGE_BUCKETS = [
   { label: "<18", min: 0, max: 17 },
   { label: "18-24", min: 18, max: 24 },
@@ -190,6 +192,37 @@ function buildTrendTemplate(startDate: Date, endDate: Date): Map<string, number>
   return template;
 }
 
+async function fetchAllResponses(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  tableName: string
+): Promise<RespuestaRow[]> {
+  const rows: RespuestaRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + SUPABASE_BATCH_SIZE - 1;
+    const { data, error } = await supabase
+      .from(tableName)
+      .select("created_at, edad, sexo, respuesta_1, respuesta_2, respuesta_3")
+      .range(from, to);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const batch = ((data ?? []) as RespuestaRow[]).filter(Boolean);
+    rows.push(...batch);
+
+    if (batch.length < SUPABASE_BATCH_SIZE) {
+      break;
+    }
+
+    from += SUPABASE_BATCH_SIZE;
+  }
+
+  return rows;
+}
+
 export async function GET(request: Request) {
   try {
     const authHeader = request.headers.get("authorization") ?? "";
@@ -218,15 +251,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "No tienes permisos para acceder al panel." }, { status: 403 });
     }
 
-    const { data, error } = await supabase
-      .from(tables.respuestas)
-      .select("created_at, edad, sexo, respuesta_1, respuesta_2, respuesta_3");
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    const rows = ((data ?? []) as RespuestaRow[]).filter(Boolean);
+    const rows = await fetchAllResponses(supabase, tables.respuestas);
 
     const todayStart = startOfDay(new Date());
 
