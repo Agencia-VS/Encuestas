@@ -57,6 +57,14 @@ Notas:
 - Si defines `SURVEY_START_DATE`, el KPI de promedio diario usa dias activos desde esa fecha (con tope de 7 dias).
 - Si defines `SURVEY_START_DATE`, la tab Tendencia tambien muestra solo dias activos (con tope de 14 dias).
 - Si no defines `SURVEY_START_DATE`, el backend intenta inferir la fecha de inicio desde la primera respuesta registrada.
+- En `/admin` puedes usar export visual del dashboard con el mismo estilo del panel (render del DOM).
+- Formatos disponibles:
+	- `PDF` multipagina
+	- `PNG` empaquetado en `.zip` (una imagen por tab)
+- Opciones del export:
+	- seleccionar tabs a incluir
+	- incluir portada ejecutiva (solo PDF) con KPIs y fecha
+- En tabs de cruces, el export visual separa automaticamente por pregunta (P1/P2/P3) para evitar capturas muy largas.
 
 ## Tabla respuestas
 

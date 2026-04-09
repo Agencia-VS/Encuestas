@@ -1,7 +1,10 @@
 "use client";
 
 import { createClient, type Session } from "@supabase/supabase-js";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import jsPDF from "jspdf";
+import { toPng } from "html-to-image";
+import JSZip from "jszip";
 import {
   Bar,
   BarChart,
@@ -45,6 +48,18 @@ type QuestionStat = {
   options: QuestionOption[];
 };
 
+type CrossGroupStat = {
+  groupLabel: string;
+  totalAnswered: number;
+  options: QuestionOption[];
+};
+
+type CrossQuestionStat = {
+  id: string;
+  title: string;
+  groups: CrossGroupStat[];
+};
+
 type TrendPoint = {
   date: string;
   count: number;
@@ -58,6 +73,12 @@ type AdminStatsResponse = {
     edades: GroupStat[];
   };
   questions: QuestionStat[];
+  crosses: {
+    sexoVsPreguntas: CrossQuestionStat[];
+    edadVsPreguntas: CrossQuestionStat[];
+    sexoEdadVsPreguntas: CrossQuestionStat[];
+    nacionalidadResidenciaVsPreguntas: CrossQuestionStat[];
+  };
   trend14d: TrendPoint[];
 };
 
@@ -74,6 +95,43 @@ type AdminTabSection = {
 };
 
 const CHART_COLORS = ["#382960", "#A42879", "#C73D35", "#EBBC45", "#6F5A9F", "#9988BC", "#D4B8E8"];
+const EXPORT_CAPTURE_DELAY_MS = 260;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForUiRender(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
+}
+
+function sanitizeFilePart(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_\-]/g, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "vista";
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
+}
 
 function formatDateLabel(isoDate: string): string {
   const date = new Date(`${isoDate}T00:00:00`);
@@ -220,6 +278,112 @@ function TrendChart({ points }: { points: TrendPoint[] }) {
   );
 }
 
+function CrossQuestionView({
+  questions,
+  heading,
+  description,
+}: {
+  questions?: CrossQuestionStat[];
+  heading: string;
+  description: string;
+}) {
+  const safeQuestions = questions ?? [];
+
+  if (safeQuestions.length === 0) {
+    return (
+      <article
+        className="rounded-2xl border px-4 py-4 sm:px-5"
+        style={{ borderColor: "#E2D5F1", background: "#FFFFFF" }}
+      >
+        <h2 className="text-sm sm:text-base font-bold" style={{ color: "#252626" }}>
+          {heading}
+        </h2>
+        <p className="mt-2 text-sm" style={{ color: "#7B7B7B" }}>
+          Sin datos disponibles.
+        </p>
+      </article>
+    );
+  }
+
+  return (
+    <section
+      className="rounded-2xl border px-4 py-4 sm:px-5"
+      style={{ borderColor: "#E2D5F1", background: "#FFFFFF" }}
+    >
+      <h2 className="text-sm sm:text-base font-bold" style={{ color: "#252626" }}>
+        {heading}
+      </h2>
+      <p className="mt-1 text-xs" style={{ color: "#7B7B7B" }}>
+        {description}
+      </p>
+
+      <div className="mt-3 space-y-3">
+        {safeQuestions.map((question) => (
+          <article
+            key={question.id}
+            data-export-cross-question="true"
+            data-export-question-id={question.id}
+            data-export-question-title={question.title}
+            className="rounded-xl border px-3 py-3 sm:px-4"
+            style={{ borderColor: "#EDE3F7", background: "#FBF8FF" }}
+          >
+            <h3 className="text-sm font-semibold" style={{ color: "#252626" }}>
+              {question.title}
+            </h3>
+
+            <div className="mt-2 grid grid-cols-1 xl:grid-cols-2 gap-2.5">
+              {question.groups.map((group) => {
+                const topOptions = group.options.slice(0, 5);
+
+                return (
+                  <div
+                    key={`${question.id}-${group.groupLabel}`}
+                    className="rounded-lg border px-3 py-2.5"
+                    style={{ borderColor: "#E8DCF6", background: "#FFFFFF" }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold" style={{ color: "#382960" }}>
+                        {group.groupLabel}
+                      </p>
+                      <p className="text-[11px]" style={{ color: "#7B7B7B" }}>
+                        Total: {group.totalAnswered}
+                      </p>
+                    </div>
+
+                    <div className="mt-2 space-y-1.5">
+                      {topOptions.map((option) => (
+                        <div key={`${question.id}-${group.groupLabel}-${option.option}`}>
+                          <div className="flex items-center justify-between text-[11px] gap-2">
+                            <span className="truncate" style={{ color: "#3F3F3F" }}>
+                              {option.option}
+                            </span>
+                            <span className="font-semibold shrink-0" style={{ color: "#382960" }}>
+                              {option.count} ({option.percentage}%)
+                            </span>
+                          </div>
+                          <div className="mt-1 h-1.5 rounded-full" style={{ background: "#EFE6FA" }}>
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${Math.min(100, Math.max(0, option.percentage))}%`,
+                                background: "linear-gradient(120deg, #A42879, #382960)",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function AdminSidebarNav({
   sections,
   activeTab,
@@ -298,8 +462,14 @@ export default function AdminPage() {
   const [stats, setStats] = useState<AdminStatsResponse | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState("");
+  const [exportingDashboard, setExportingDashboard] = useState(false);
+  const [exportConfigOpen, setExportConfigOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<"pdf" | "png">("pdf");
+  const [includeCoverPage, setIncludeCoverPage] = useState(true);
+  const [selectedExportTabIds, setSelectedExportTabIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const exportCaptureRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!supabase) {
@@ -444,6 +614,20 @@ export default function AdminPage() {
         ],
       },
       {
+        id: "crosses",
+        title: "Cruces",
+        tabs: [
+          { id: "cross-sexo", label: "Sexo vs P1/P2/P3", helper: "Vista general" },
+          { id: "cross-edad", label: "Edad vs P1/P2/P3", helper: "Por rango etario" },
+          { id: "cross-sexo-edad", label: "Sexo+Edad vs P1/P2/P3", helper: "Cruce 3 variables" },
+          {
+            id: "cross-nac-res",
+            label: "Nacionalidad+Residencia vs P1/P2/P3",
+            helper: "Segmentacion geografica",
+          },
+        ],
+      },
+      {
         id: "demographics",
         title: "Demografia",
         tabs: [
@@ -475,6 +659,212 @@ export default function AdminPage() {
   const activeTabData = useMemo(() => {
     return tabs.find((tab) => tab.id === activeTab) ?? null;
   }, [activeTab, tabs]);
+
+  const selectedExportTabs = useMemo(() => {
+    return tabs.filter((tab) => selectedExportTabIds.includes(tab.id));
+  }, [tabs, selectedExportTabIds]);
+
+  useEffect(() => {
+    if (tabs.length === 0) {
+      setSelectedExportTabIds([]);
+      return;
+    }
+
+    setSelectedExportTabIds((previous) => {
+      const valid = previous.filter((id) => tabs.some((tab) => tab.id === id));
+      if (valid.length > 0) {
+        return valid;
+      }
+
+      return tabs.map((tab) => tab.id);
+    });
+  }, [tabs]);
+
+  const handleExportDashboardVisual = async () => {
+    if (!stats || exportingDashboard || selectedExportTabs.length === 0) {
+      if (!statsError && selectedExportTabs.length === 0) {
+        setStatsError("Selecciona al menos una vista para exportar.");
+      }
+      return;
+    }
+
+    const originalTab = activeTab;
+    setMobileMenuOpen(false);
+    setExportingDashboard(true);
+    setStatsError("");
+
+    try {
+      const capturedTabs: Array<{
+        tab: AdminTab;
+        label: string;
+        fileLabel: string;
+        imageDataUrl: string;
+        width: number;
+        height: number;
+      }> = [];
+
+      for (const tab of selectedExportTabs) {
+        setActiveTab(tab.id);
+        await waitForUiRender();
+        await sleep(EXPORT_CAPTURE_DELAY_MS);
+
+        const captureNode = exportCaptureRef.current;
+        if (!captureNode) {
+          continue;
+        }
+
+        const questionNodes = tab.id.startsWith("cross-")
+          ? Array.from(captureNode.querySelectorAll<HTMLElement>("[data-export-cross-question='true']"))
+          : [];
+
+        const captureTargets = questionNodes.length > 0
+          ? questionNodes.map((node, index) => ({
+              node,
+              label:
+                node.dataset.exportQuestionTitle?.trim() ||
+                `${tab.label} - Pregunta ${index + 1}`,
+              fileLabel:
+                node.dataset.exportQuestionId?.trim() ||
+                `pregunta_${index + 1}`,
+              backgroundColor: "#FFFFFF",
+            }))
+          : [
+              {
+                node: captureNode,
+                label: tab.label,
+                fileLabel: sanitizeFilePart(tab.label),
+                backgroundColor: "#F6F3FB",
+              },
+            ];
+
+        for (const target of captureTargets) {
+          const imageDataUrl = await toPng(target.node, {
+            cacheBust: true,
+            pixelRatio: 2,
+            backgroundColor: target.backgroundColor,
+          });
+
+          const image = new Image();
+          image.src = imageDataUrl;
+          await image.decode();
+
+          capturedTabs.push({
+            tab,
+            label: target.label,
+            fileLabel: target.fileLabel,
+            imageDataUrl,
+            width: image.width,
+            height: image.height,
+          });
+        }
+      }
+
+      if (capturedTabs.length === 0) {
+        throw new Error("No fue posible capturar vistas para exportar.");
+      }
+
+      const datePart = new Date().toISOString().slice(0, 10);
+
+      if (exportFormat === "png") {
+        const zip = new JSZip();
+
+        capturedTabs.forEach((capture, index) => {
+          const base64 = capture.imageDataUrl.split(",")[1] ?? "";
+          const tabPart = sanitizeFilePart(capture.tab.label);
+          const capturePart = sanitizeFilePart(capture.fileLabel);
+          const filename = `${String(index + 1).padStart(2, "0")}_${tabPart}_${capturePart}.png`;
+          zip.file(filename, base64, { base64: true });
+        });
+
+        const zipBlob = await zip.generateAsync({
+          type: "blob",
+          compression: "DEFLATE",
+          compressionOptions: { level: 6 },
+        });
+
+        downloadBlob(zipBlob, `dashboard_estadisticas_${datePart}.zip`);
+      } else {
+        const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+        const margin = 10;
+        const titleHeight = 8;
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const renderWidthMax = pageWidth - margin * 2;
+        const renderHeightMax = pageHeight - margin * 2 - titleHeight;
+        let hasPage = false;
+
+        if (includeCoverPage) {
+          hasPage = true;
+          pdf.setFillColor(246, 243, 251);
+          pdf.rect(0, 0, pageWidth, pageHeight, "F");
+          pdf.setTextColor(56, 41, 96);
+          pdf.setFontSize(20);
+          pdf.text("Reporte visual dashboard", margin, 24);
+          pdf.setFontSize(11);
+          pdf.setTextColor(82, 82, 82);
+          pdf.text(`Generado: ${new Date().toLocaleString("es-ES")}`, margin, 34);
+          pdf.text(`Actualizado panel: ${new Date(stats.generatedAt).toLocaleString("es-ES")}`, margin, 41);
+
+          pdf.setFillColor(255, 255, 255);
+          pdf.setDrawColor(226, 213, 241);
+          pdf.roundedRect(margin, 48, pageWidth - margin * 2, 32, 2, 2, "FD");
+          pdf.setTextColor(37, 38, 38);
+          pdf.text(`Total respuestas: ${stats.overview.totalResponses}`, margin + 4, 58);
+          pdf.text(`Respuestas hoy: ${stats.overview.totalToday}`, margin + 4, 65);
+          pdf.text(`Ultimos 7 dias: ${stats.overview.totalLast7Days}`, margin + 4, 72);
+
+          pdf.setTextColor(56, 41, 96);
+          pdf.setFontSize(12);
+          pdf.text("Vistas exportadas", margin, 92);
+          pdf.setFontSize(10);
+          pdf.setTextColor(90, 90, 90);
+
+          let y = 100;
+          for (const capture of capturedTabs) {
+            pdf.text(`- ${capture.label}`, margin + 2, y);
+            y += 6;
+            if (y > pageHeight - 12) {
+              pdf.addPage();
+              y = 16;
+            }
+          }
+        }
+
+        for (const capture of capturedTabs) {
+          if (hasPage) {
+            pdf.addPage();
+          }
+
+          hasPage = true;
+          const ratio = Math.min(renderWidthMax / capture.width, renderHeightMax / capture.height);
+
+          const renderWidth = capture.width * ratio;
+          const renderHeight = capture.height * ratio;
+
+          pdf.setFontSize(11);
+          pdf.setTextColor(56, 41, 96);
+          pdf.text(`Vista: ${capture.label}`, margin, margin + 4);
+          pdf.addImage(
+            capture.imageDataUrl,
+            "PNG",
+            margin,
+            margin + titleHeight,
+            renderWidth,
+            renderHeight,
+            undefined,
+            "FAST"
+          );
+        }
+
+        pdf.save(`dashboard_estadisticas_${datePart}.pdf`);
+      }
+    } catch (error) {
+      setStatsError(error instanceof Error ? error.message : "No fue posible exportar el dashboard.");
+    } finally {
+      setActiveTab(originalTab);
+      setExportingDashboard(false);
+    }
+  };
 
   useEffect(() => {
     if (!stats) {
@@ -601,6 +991,29 @@ export default function AdminPage() {
               <button
                 type="button"
                 onClick={() => {
+                  void handleExportDashboardVisual();
+                }}
+                disabled={exportingDashboard}
+                className="min-h-10 rounded-lg border px-3 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                style={{ borderColor: "#E2D5F1", color: "#5A5A5A" }}
+              >
+                {exportingDashboard
+                  ? `Exportando ${exportFormat.toUpperCase()}...`
+                  : `Exportar visual ${exportFormat.toUpperCase()}`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setExportConfigOpen((previous) => !previous)}
+                className="min-h-10 rounded-lg border px-3 text-xs font-semibold"
+                style={{ borderColor: "#E2D5F1", color: "#5A5A5A" }}
+              >
+                {exportConfigOpen ? "Ocultar opciones" : "Opciones export"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
                   if (session?.access_token) {
                     void fetch("/api/admin/stats", {
                       method: "GET",
@@ -642,6 +1055,118 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
+
+          {exportConfigOpen && (
+            <div
+              className="mt-3 rounded-xl border px-3 py-3 sm:px-4"
+              style={{ borderColor: "#EDE3F7", background: "#FBF8FF" }}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.11em] font-semibold" style={{ color: "#7B7B7B" }}>
+                    Formato
+                  </p>
+                  <div className="mt-2 flex items-center gap-4 text-sm" style={{ color: "#3F3F3F" }}>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="export-format"
+                        checked={exportFormat === "pdf"}
+                        onChange={() => setExportFormat("pdf")}
+                      />
+                      PDF
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="export-format"
+                        checked={exportFormat === "png"}
+                        onChange={() => setExportFormat("png")}
+                      />
+                      PNG (ZIP)
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.11em] font-semibold" style={{ color: "#7B7B7B" }}>
+                    Opciones
+                  </p>
+                  <div className="mt-2 text-sm" style={{ color: "#3F3F3F" }}>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={includeCoverPage}
+                        disabled={exportFormat !== "pdf"}
+                        onChange={(event) => setIncludeCoverPage(event.target.checked)}
+                      />
+                      Incluir portada ejecutiva (solo PDF)
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] uppercase tracking-[0.11em] font-semibold" style={{ color: "#7B7B7B" }}>
+                    Vistas a exportar ({selectedExportTabs.length}/{tabs.length})
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedExportTabIds(tabs.map((tab) => tab.id))}
+                      className="rounded-md border px-2 py-1 text-[11px] font-semibold"
+                      style={{ borderColor: "#E2D5F1", color: "#5A5A5A" }}
+                    >
+                      Todas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedExportTabIds([])}
+                      className="rounded-md border px-2 py-1 text-[11px] font-semibold"
+                      style={{ borderColor: "#E2D5F1", color: "#5A5A5A" }}
+                    >
+                      Ninguna
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {tabs.map((tab) => {
+                    const checked = selectedExportTabIds.includes(tab.id);
+
+                    return (
+                      <label
+                        key={`export-tab-${tab.id}`}
+                        className="inline-flex items-start gap-2 rounded-lg border px-2.5 py-2"
+                        style={{ borderColor: "#E8DCF6", background: "#FFFFFF", color: "#3F3F3F" }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            const isChecked = event.target.checked;
+                            setSelectedExportTabIds((previous) => {
+                              if (isChecked) {
+                                if (previous.includes(tab.id)) {
+                                  return previous;
+                                }
+
+                                return [...previous, tab.id];
+                              }
+
+                              return previous.filter((id) => id !== tab.id);
+                            });
+                          }}
+                        />
+                        <span className="text-[12px] leading-snug">{tab.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {loadingStats && !stats && (
@@ -763,7 +1288,7 @@ export default function AdminPage() {
                 />
               </aside>
 
-              <div className="min-w-0 space-y-3">
+              <div ref={exportCaptureRef} className="min-w-0 space-y-3">
               {activeTab === "overview" && (
                 <>
                   <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
@@ -789,13 +1314,45 @@ export default function AdminPage() {
                     style={{ borderColor: "#E2D5F1", background: "#FFFFFF" }}
                   >
                     <p className="text-sm" style={{ color: "#5A5A5A" }}>
-                      Usa las tabs del panel lateral para revisar demografia, respuestas por pregunta y tendencia.
+                      Usa las tabs del panel lateral para revisar cruces generales, demografia, respuestas por pregunta y tendencia.
                     </p>
                     <p className="mt-2 text-[11px]" style={{ color: "#8A8A8A" }}>
                       Actualizado: {new Date(stats.generatedAt).toLocaleString("es-ES")}
                     </p>
                   </article>
                 </>
+              )}
+
+              {activeTab === "cross-sexo" && (
+                <CrossQuestionView
+                  questions={stats.crosses?.sexoVsPreguntas ?? []}
+                  heading="Cruce general: sexo vs P1/P2/P3"
+                  description="Primero una lectura global por sexo. Cada bloque muestra top 5 respuestas por pregunta para facilitar conclusiones rapidas."
+                />
+              )}
+
+              {activeTab === "cross-edad" && (
+                <CrossQuestionView
+                  questions={stats.crosses?.edadVsPreguntas ?? []}
+                  heading="Cruce por rango etario: P1/P2/P3"
+                  description="Aqui ves el mismo cruce, pero segmentado por rangos de edad para identificar diferencias de preferencia entre cohorts."
+                />
+              )}
+
+              {activeTab === "cross-sexo-edad" && (
+                <CrossQuestionView
+                  questions={stats.crosses?.sexoEdadVsPreguntas ?? []}
+                  heading="Cruce combinado: sexo + rango etario vs P1/P2/P3"
+                  description="Este cruce combina 3 variables para cada pregunta: sexo, rango etario y respuesta. Ideal para detectar segmentos puntuales con mayor afinidad."
+                />
+              )}
+
+              {activeTab === "cross-nac-res" && (
+                <CrossQuestionView
+                  questions={stats.crosses?.nacionalidadResidenciaVsPreguntas ?? []}
+                  heading="Cruce combinado: nacionalidad + pais de residencia vs P1/P2/P3"
+                  description="Esta vista cruza nacionalidad y residencia con cada respuesta para leer diferencias entre chilenos en Chile, chilenos en el extranjero y migrantes en Chile."
+                />
               )}
 
               {activeTab === "sexo" && (

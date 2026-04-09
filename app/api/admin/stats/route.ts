@@ -3,13 +3,23 @@ import { getSupabaseClient } from "@/lib/supabase";
 import { getSupabaseTables } from "@/lib/supabaseTables";
 
 type RespuestaRow = {
+  id: string;
   created_at: string | null;
   edad: number | null;
   sexo: string | null;
+  pais_residencia: string | null;
+  nacionalidad: string | null;
   respuesta_1: string | null;
   respuesta_2: string | null;
   respuesta_3: string | null;
 };
+
+type CrossGroupAccumulator = {
+  totalAnswered: number;
+  options: Map<string, { option: string; count: number }>;
+};
+
+type CrossAccumulator = Record<QuestionKey, Map<string, CrossGroupAccumulator>>;
 
 type QuestionKey = "respuesta_1" | "respuesta_2" | "respuesta_3";
 
@@ -80,6 +90,15 @@ function toCanonicalLabel(raw: string): string {
       return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
     })
     .join(" ");
+}
+
+function normalizeGroupLabel(raw: string | null | undefined): string {
+  const clean = (raw ?? "").trim();
+  if (clean.length === 0) {
+    return "No especifica";
+  }
+
+  return toCanonicalLabel(clean);
 }
 
 export function answerGroupKey(raw: string): string {
@@ -192,6 +211,72 @@ function buildTrendTemplate(startDate: Date, endDate: Date): Map<string, number>
   return template;
 }
 
+function createCrossAccumulator(): CrossAccumulator {
+  return {
+    respuesta_1: new Map<string, CrossGroupAccumulator>(),
+    respuesta_2: new Map<string, CrossGroupAccumulator>(),
+    respuesta_3: new Map<string, CrossGroupAccumulator>(),
+  };
+}
+
+function registerCrossAnswer(
+  crossAccumulator: CrossAccumulator,
+  questionId: QuestionKey,
+  groupLabel: string,
+  answer: string
+) {
+  const perQuestionMap = crossAccumulator[questionId];
+  const normalizedGroupLabel = groupLabel.trim().length > 0 ? groupLabel : "No especifica";
+  const answerKey = answerGroupKey(answer);
+
+  let groupEntry = perQuestionMap.get(normalizedGroupLabel);
+  if (!groupEntry) {
+    groupEntry = {
+      totalAnswered: 0,
+      options: new Map<string, { option: string; count: number }>(),
+    };
+    perQuestionMap.set(normalizedGroupLabel, groupEntry);
+  }
+
+  groupEntry.totalAnswered += 1;
+
+  const optionEntry = groupEntry.options.get(answerKey);
+  if (optionEntry) {
+    optionEntry.count += 1;
+    return;
+  }
+
+  groupEntry.options.set(answerKey, { option: answer, count: 1 });
+}
+
+function mapCrossAccumulator(crossAccumulator: CrossAccumulator) {
+  return QUESTION_CONFIG.map((question) => {
+    const groups = Array.from(crossAccumulator[question.id].entries())
+      .map(([groupLabel, groupEntry]) => {
+        const options = Array.from(groupEntry.options.values())
+          .map((option) => ({
+            option: option.option,
+            count: option.count,
+            percentage: percentage(option.count, groupEntry.totalAnswered),
+          }))
+          .sort((a, b) => b.count - a.count);
+
+        return {
+          groupLabel,
+          totalAnswered: groupEntry.totalAnswered,
+          options,
+        };
+      })
+      .sort((a, b) => b.totalAnswered - a.totalAnswered);
+
+    return {
+      id: question.id,
+      title: question.title,
+      groups,
+    };
+  });
+}
+
 async function fetchAllResponses(
   supabase: ReturnType<typeof getSupabaseClient>,
   tableName: string
@@ -203,7 +288,9 @@ async function fetchAllResponses(
     const to = from + SUPABASE_BATCH_SIZE - 1;
     const { data, error } = await supabase
       .from(tableName)
-      .select("created_at, edad, sexo, respuesta_1, respuesta_2, respuesta_3")
+      .select("id, created_at, edad, sexo, pais_residencia, nacionalidad, respuesta_1, respuesta_2, respuesta_3")
+      .order("created_at", { ascending: true, nullsFirst: true })
+      .order("id", { ascending: true })
       .range(from, to);
 
     if (error) {
@@ -275,6 +362,10 @@ export async function GET(request: Request) {
       respuesta_2: new Map<string, { option: string; count: number }>(),
       respuesta_3: new Map<string, { option: string; count: number }>(),
     };
+    const crossBySexo = createCrossAccumulator();
+    const crossByEdad = createCrossAccumulator();
+    const crossBySexoEdad = createCrossAccumulator();
+    const crossByNacionalidadResidencia = createCrossAccumulator();
 
     const answeredCount: Record<QuestionKey, number> = {
       respuesta_1: 0,
@@ -305,12 +396,16 @@ export async function GET(request: Request) {
       }
 
       const sexo = toTitleCase((row.sexo ?? "").trim());
+      const paisResidencia = normalizeGroupLabel(row.pais_residencia);
+      const nacionalidad = normalizeGroupLabel(row.nacionalidad);
       sexoMap.set(sexo, (sexoMap.get(sexo) ?? 0) + 1);
 
       const ageValue = typeof row.edad === "number" ? row.edad : Number.NaN;
+      let ageLabelForCross = "No especifica";
       if (Number.isInteger(ageValue) && ageValue >= 0) {
         const bucket = AGE_BUCKETS.find((item) => ageValue >= item.min && ageValue <= item.max);
         const label = bucket?.label ?? "No especifica";
+        ageLabelForCross = label;
         ageMap.set(label, (ageMap.get(label) ?? 0) + 1);
       } else {
         ageMap.set("No especifica", (ageMap.get("No especifica") ?? 0) + 1);
@@ -327,6 +422,16 @@ export async function GET(request: Request) {
         } else {
           questionMaps[question.id].set(key, { option: answer, count: 1 });
         }
+
+        registerCrossAnswer(crossBySexo, question.id, sexo, answer);
+        registerCrossAnswer(crossByEdad, question.id, ageLabelForCross, answer);
+        registerCrossAnswer(crossBySexoEdad, question.id, `Sexo: ${sexo} | Edad: ${ageLabelForCross}`, answer);
+        registerCrossAnswer(
+          crossByNacionalidadResidencia,
+          question.id,
+          `Nacionalidad: ${nacionalidad} | Residencia: ${paisResidencia}`,
+          answer
+        );
       }
     }
 
@@ -376,6 +481,12 @@ export async function GET(request: Request) {
       .sort((a, b) => b.count - a.count);
 
     const trend14d = Array.from(trend.entries()).map(([date, count]) => ({ date, count }));
+    const crosses = {
+      sexoVsPreguntas: mapCrossAccumulator(crossBySexo),
+      edadVsPreguntas: mapCrossAccumulator(crossByEdad),
+      sexoEdadVsPreguntas: mapCrossAccumulator(crossBySexoEdad),
+      nacionalidadResidenciaVsPreguntas: mapCrossAccumulator(crossByNacionalidadResidencia),
+    };
 
     return NextResponse.json(
       {
@@ -392,6 +503,7 @@ export async function GET(request: Request) {
           edades,
         },
         questions,
+        crosses,
         trend14d,
       },
       {
